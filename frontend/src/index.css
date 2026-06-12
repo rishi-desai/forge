@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { background: #0C111D; }
+body { @apply font-sys text-text antialiased; }
+* { scrollbar-width: thin; scrollbar-color: #1F2A40 transparent; }
+
+.num { font-variant-numeric: tabular-nums; }
+.lbl { @apply text-[11px] uppercase tracking-[0.12em] text-faint font-medium; }
+
+.card { @apply bg-panel border border-line rounded-lg; }
+.tbl th { @apply lbl text-left px-3 py-2 sticky top-0 bg-panel z-10 border-b border-line; }
+.tbl td { @apply px-3 py-2 text-sm border-b border-line/50; }
+.tbl tr:nth-child(even) td { @apply bg-well/60; }
+.tbl tr:hover td { @apply bg-well; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

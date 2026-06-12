@@ -1,0 +1,92 @@
+{
+  "account": {
+    "starting_cash": 10000,
+    "account_type": "cash"
+  },
+  "risk": {
+    "profile": "moderate",
+    "custom_overrides": {}
+  },
+  "conviction_overrides": {
+    "enabled": true,
+    "max_allowed_tier": "MAX",
+    "auto_execute_strong": true,
+    "auto_execute_max": true,
+    "all_in_requires_approval": true,
+    "max_override_trades_per_day": 2,
+    "max_override_trades_per_week": 5,
+    "approval_timeout_seconds": 300,
+    "notify_on_override": true,
+    "log_rejected_overrides": true
+  },
+  "trading": {
+    "watchlist": [
+      "SPY",
+      "QQQ",
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "AMZN",
+      "GOOGL",
+      "META",
+      "TSLA",
+      "AMD",
+      "XLE",
+      "XLF",
+      "IWM"
+    ],
+    "foreign_proxies": [
+      "EWJ",
+      "EWG",
+      "EWU",
+      "FXI",
+      "INDA",
+      "EWZ"
+    ],
+    "scan_interval_minutes": 5,
+    "position_check_interval_seconds": 60,
+    "min_hold_minutes_options": 15,
+    "zero_dte_force_close_et": "15:00",
+    "credit_trade_profit_target_pct": 0.5,
+    "rationale_llm_enabled": false
+  },
+  "data": {
+    "finnhub_ws_symbols": 30,
+    "cache_ttl_seconds": {
+      "quote": 5,
+      "iv": 300,
+      "macro": 3600,
+      "news": 600,
+      "flow": 900
+    },
+    "fred_series": [
+      "DFF",
+      "T10Y2Y",
+      "CPIAUCSL",
+      "VIXCLS",
+      "DTWEXBGS",
+      "UNRATE"
+    ]
+  },
+  "storage": {
+    "backend": "sqlite",
+    "sqlite_path": "data/trading.db"
+  },
+  "ml_engine": {
+    "enabled": true,
+    "min_samples_to_train": 30,
+    "training_window_days": 90,
+    "min_val_auc_to_deploy": 0.52,
+    "retrain_on_n_new_trades": 20,
+    "model_dir": "backend/models",
+    "feature_staleness_days": 14
+  },
+  "regime_model": {
+    "enabled": true,
+    "n_components": 4,
+    "lookback_days": 504,
+    "refit_every_days": 7,
+    "min_history_days": 120,
+    "model_dir": "backend/models"
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "_note": "Distilled frameworks and heuristics derived from the spec's reading list, encoded in original wording as machine-usable rules. Facts and trading heuristics, not reproduced text. The signal engine and selector consume these; the learning loop reweights them.",
+  "technical_analysis": {
+    "trend_framework": {
+      "source_style": "Murphy-style classical TA",
+      "rules": [
+        "Trend is primary: trade with the direction of the 200-day MA; counter-trend trades get reduced size and tighter stops",
+        "Volume confirms price: breakouts on >1.5x average volume are trustworthy; breakouts on light volume are suspect",
+        "Support/resistance flip roles after a clean break; the 50-day MA acts as dynamic support in uptrends",
+        "Divergence between price and momentum (RSI/MACD) precedes reversals more reliably than overbought/oversold levels alone"
+      ]
+    },
+    "candlestick_reversals": {
+      "source_style": "Nison-style candlestick reading",
+      "rules": [
+        "Reversal candles only matter at extremes after a trend, never mid-range",
+        "Engulfing patterns and hammers at support with volume = highest-probability reversal signals",
+        "Doji after extended trend = indecision; wait for the next bar's confirmation before acting",
+        "Gaps in the direction of trend tend to fill in range-bound regimes and run in trending regimes"
+      ]
+    },
+    "pattern_statistics": {
+      "source_style": "Bulkowski-style pattern stats",
+      "rules": [
+        "Measured-move targets: project the pattern height from the breakout point",
+        "Throwbacks/pullbacks to the breakout level occur in roughly half of breakouts; they are entries, not failures, if volume holds",
+        "Tight consolidation before breakout beats loose consolidation; volatility contraction precedes expansion"
+      ]
+    },
+    "canslim": {
+      "source_style": "O'Neil CANSLIM momentum",
+      "checklist": ["current quarterly earnings acceleration", "annual earnings growth", "new product/catalyst", "supply/demand via volume", "leader in group (RS rank > 85)", "institutional sponsorship rising", "market in confirmed uptrend"],
+      "rules": [
+        "Buy new 52-week highs out of sound bases on volume, never falling knives",
+        "Hard stop 7-8% below entry, no exceptions, no averaging down",
+        "Market direction filter: most breakouts fail when the index is below its 50-day MA"
+      ]
+    }
+  },
+  "options": {
+    "strategy_selection": {
+      "source_style": "McMillan-style strategy mapping",
+      "rules": [
+        "Match strategy to BOTH direction and volatility view: direction picks call/put side, IV rank picks debit vs credit structure",
+        "Defined-risk spreads over naked positions whenever account constraints or uncertainty are present",
+        "Roll or close at 21 DTE for short premium to dodge gamma risk into expiry",
+        "Take profits mechanically: 50% of max profit on credit trades outperforms holding to expiry on a risk-adjusted basis"
+      ]
+    },
+    "volatility": {
+      "source_style": "Natenberg/Gatheral vol framework",
+      "rules": [
+        "IV rank > 50 favors selling premium; IV rank < 30 favors buying it; 30-60 favors spreads that mute vega",
+        "IV is mean-reverting; realized vol is the anchor IV reverts toward",
+        "Term structure normally slopes upward; inversion (front month above back) signals stress -- stop selling premium",
+        "Skew: OTM puts carry persistent IV premium versus calls; put spreads partially harvest the skew you pay for",
+        "Earnings IV crush: front-month IV collapses after the print; never hold long premium through a binary event you bought ahead of"
+      ]
+    },
+    "greeks_practice": {
+      "source_style": "Passarelli-style applied greeks",
+      "rules": [
+        "Theta is the rent: long options must have a catalyst or trend strong enough to outrun daily decay",
+        "Gamma explodes inside 7 DTE; short premium there demands smaller size and faster exits",
+        "Portfolio-level greeks matter more than per-position: cap net delta and keep theta positive when in premium-selling mode",
+        "Vega risk concentrates in longer-dated options; calendars are long vega, condors short vega"
+      ]
+    }
+  },
+  "quant": {
+    "backtesting_pitfalls": {
+      "source_style": "Lopez de Prado / Chan rigor rules",
+      "rules": [
+        "Overfitting is the default outcome: every added parameter must justify itself out-of-sample",
+        "Survivorship and look-ahead bias inflate every naive backtest; use point-in-time data and walk-forward splits",
+        "A strategy needs an economic rationale (who is on the other side and why) before statistics mean anything",
+        "Meta-labeling: use the primary signal for direction and a second model for bet size",
+        "Minimum sample: do not trust a setup with fewer than ~20 independent historical occurrences"
+      ]
+    },
+    "systematic_design": {
+      "source_style": "Narang-style systematic structure",
+      "rules": [
+        "Separate alpha model, risk model, transaction-cost model, and portfolio construction; never let one component silently do another's job",
+        "Small, consistent edges compound; the risk model is what keeps you alive long enough to collect them"
+      ]
+    }
+  },
+  "risk_and_psychology": {
+    "trader_rules": {
+      "source_style": "Schwager interviews / Lefevre composite",
+      "rules": [
+        "Cut losses fast, let winners run; asymmetry of outcomes matters more than win rate",
+        "Position size so that no single trade can knock you out of the game",
+        "The crowd is right during trends and wrong at extremes; sentiment extremes are contrarian signals",
+        "Sitting on hands is a position: when the setup is not there, do not trade",
+        "After a losing streak, cut size; after a winning streak, do not increase it euphoric-fast"
+      ]
+    },
+    "tail_risk": {
+      "source_style": "Lowenstein LTCM / Bernstein risk history",
+      "rules": [
+        "Correlations go to 1 in a crisis: diversification measured in calm markets overstates protection",
+        "Leverage converts a drawdown into a death sentence; this system uses none",
+        "Models calibrated on recent history underestimate tail frequency; circuit breakers must be dumb and absolute, not model-driven"
+      ]
+    }
+  },
+  "papers": {
+    "fama_french_1992": {"finding": "Value and size factors explain cross-sectional returns beyond market beta", "use": "factor tilt awareness in equity selection"},
+    "jegadeesh_titman_1993": {"finding": "3-12 month winners keep winning over the next 3-12 months", "use": "momentum entries; RS rank threshold"},
+    "heston_1993": {"finding": "Stochastic volatility model with closed-form pricing; vol clusters and mean-reverts", "use": "IV mean-reversion assumption in premium-selling gates"},
+    "carr_wu_2009": {"finding": "Variance risk premium: implied vol systematically exceeds realized; selling premium has structural edge with tail risk", "use": "why iron condors at high IV rank are the default income trade"},
+    "welch_goyal": {"finding": "Most published equity-premium predictors fail out-of-sample", "use": "skepticism prior on any single macro predictor; ensemble signals only"},
+    "george_hwang": {"finding": "Proximity to 52-week high predicts returns; anchoring drives underreaction", "use": "52-week-high breakout rule in the equity playbook"}
+  }
+}

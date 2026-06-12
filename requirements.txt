@@ -1,0 +1,25 @@
+# Core (all free)
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.7
+requests>=2.31
+websocket-client>=1.8
+pandas>=2.2
+numpy>=1.26
+python-dotenv>=1.0
+
+# ML adaptive signal engine
+xgboost>=2.0.0
+scikit-learn>=1.3.0      # ML metrics + GaussianMixture regime model
+joblib>=1.3.0            # background retraining + regime model persistence
+# hmmlearn>=0.3           # optional: swap GMM for a true HMM in regime_model._fit
+
+# Broker + data
+alpaca-py>=0.21          # paper trading + (optional) indicative options data
+finnhub-python>=2.4      # optional convenience; data_clients.py uses raw REST anyway
+
+# Optional extras — uncomment if wanted
+# transformers>=4.41     # FinBERT sentiment (heavier install; keyword fallback used otherwise)
+# torch                  # required by transformers
+# anthropic>=0.30        # LLM-polished rationales (off by default; costs money)
+# beautifulsoup4>=4.12   # only if you implement a scrape-based flow adapter (check ToS)
