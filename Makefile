@@ -98,7 +98,7 @@ start-tunnel:
 	if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
 		echo "tunnel already running (pid $$pid)"; \
 	else \
-		setsid sh -c 'exec cloudflared tunnel run $(TUNNEL_NAME)' \
+		setsid sh -c 'exec cloudflared --config cloudflared.yml tunnel run $(TUNNEL_NAME)' \
 			>>$(TUNNEL_LOG) 2>&1 & \
 		echo $$! > $(TUNNEL_PID); \
 		echo "tunnel   → cloudflared tunnel run $(TUNNEL_NAME)   log: $(TUNNEL_LOG)"; \

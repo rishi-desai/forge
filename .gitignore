@@ -1,5 +1,6 @@
 # env / secrets
 .env
+cloudflared.yml
 
 # Python
 __pycache__/
