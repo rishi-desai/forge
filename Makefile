@@ -1,4 +1,4 @@
-.PHONY: install start stop restart backend frontend tunnel \
+.PHONY: install start stop restart status backend frontend tunnel \
         start-backend start-frontend start-tunnel \
         stop-backend stop-frontend stop-tunnel \
         restart-backend restart-frontend restart-tunnel
@@ -11,7 +11,6 @@ FRONTEND_LOG := /tmp/forge-frontend.log
 TUNNEL_LOG   := /tmp/forge-tunnel.log
 PIP          := $(HOME)/.local/bin/pip
 UVICORN      := $(HOME)/.local/bin/uvicorn
-# Name given to `cloudflared tunnel create`
 TUNNEL_NAME  := forge
 
 # Absorb service-selector targets so `make start backend` etc. are valid.
@@ -20,29 +19,44 @@ backend frontend tunnel: ;
 # Services to act on: those named in the goal list, or all three if none.
 _svcs = $(or $(filter backend frontend tunnel,$(MAKECMDGOALS)),backend frontend tunnel)
 
-# Port-based running check — immune to pgrep/pkill self-match issues.
+# True if something is listening on :PORT (port-based, no pgrep needed).
 _port_up = ss -tlnp 2>/dev/null | grep -q ':$(1)'
+
+# PID listening on :PORT (fallback when pid file is stale/missing).
+_port_pid = ss -tlnp 2>/dev/null | grep ':$(1)' | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2
+
+# Elapsed time for PID from the system process table.
+_etime = ps -o etime= -p '$(1)' 2>/dev/null | tr -d ' '
 
 # ── status ────────────────────────────────────────────────────────────────────
 status:
 	@echo ""
 	@if $(call _port_up,8000); then \
-		pid=$$(cat $(BACKEND_PID) 2>/dev/null || echo "?"); \
-		echo "  backend   ● running   http://localhost:8000   pid=$$pid"; \
+		pid=$$(cat $(BACKEND_PID) 2>/dev/null); \
+		if [ -z "$$pid" ] || ! kill -0 "$$pid" 2>/dev/null; then \
+			pid=$$($(call _port_pid,8000)); \
+		fi; \
+		up=$$($(call _etime,$$pid)); \
+		printf "  backend   \033[32m●\033[0m running   http://localhost:8000   up %-9s pid=%s\n" "$$up" "$$pid"; \
 	else \
-		echo "  backend   ○ stopped"; \
+		printf "  backend   \033[2m○\033[0m stopped\n"; \
 	fi
 	@if $(call _port_up,5173); then \
-		pid=$$(cat $(FRONTEND_PID) 2>/dev/null || echo "?"); \
-		echo "  frontend  ● running   http://localhost:5173   pid=$$pid"; \
+		pid=$$(cat $(FRONTEND_PID) 2>/dev/null); \
+		if [ -z "$$pid" ] || ! kill -0 "$$pid" 2>/dev/null; then \
+			pid=$$($(call _port_pid,5173)); \
+		fi; \
+		up=$$($(call _etime,$$pid)); \
+		printf "  frontend  \033[32m●\033[0m running   http://localhost:5173    up %-9s pid=%s\n" "$$up" "$$pid"; \
 	else \
-		echo "  frontend  ○ stopped"; \
+		printf "  frontend  \033[2m○\033[0m stopped\n"; \
 	fi
-	@if pgrep -f "[c]loudflared tunnel run" >/dev/null 2>&1; then \
-		pid=$$(cat $(TUNNEL_PID) 2>/dev/null || echo "?"); \
-		echo "  tunnel    ● running   $(TUNNEL_NAME)   pid=$$pid"; \
+	@pid=$$(cat $(TUNNEL_PID) 2>/dev/null); \
+	if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+		up=$$($(call _etime,$$pid)); \
+		printf "  tunnel    \033[32m●\033[0m running   %-26s up %-9s pid=%s\n" "$(TUNNEL_NAME)" "$$up" "$$pid"; \
 	else \
-		echo "  tunnel    ○ stopped"; \
+		printf "  tunnel    \033[2m○\033[0m stopped\n"; \
 	fi
 	@echo ""
 
@@ -55,8 +69,8 @@ install:
 start:
 	@for svc in $(_svcs); do $(MAKE) --no-print-directory start-$$svc; done
 
-# setsid puts each service in its own process group (PGID = PID).
-# Killing -PGID on stop propagates to every descendant (uvicorn workers, node/vite).
+# setsid puts each service in its own process group so kill -PGID tears down
+# all descendants (uvicorn workers, npm→sh→node/vite, cloudflared children).
 start-backend:
 	@if $(call _port_up,8000); then \
 		echo "backend already running (port 8000)"; \
@@ -76,9 +90,13 @@ start-frontend:
 		echo "frontend → http://localhost:5173   log: $(FRONTEND_LOG)"; \
 	fi
 
+# Tunnel has no port to probe — use pid file + kill -0 to check liveness.
+# (pgrep -f on the tunnel name self-matches the recipe shell and always
+# returns "already running", so we avoid it entirely here.)
 start-tunnel:
-	@if pgrep -f "[c]loudflared tunnel run" >/dev/null 2>&1; then \
-		echo "tunnel already running (pid $$(pgrep -f '[c]loudflared tunnel run' | head -1))"; \
+	@pid=$$(cat $(TUNNEL_PID) 2>/dev/null); \
+	if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+		echo "tunnel already running (pid $$pid)"; \
 	else \
 		setsid sh -c 'exec cloudflared tunnel run $(TUNNEL_NAME)' \
 			>>$(TUNNEL_LOG) 2>&1 & \
@@ -93,6 +111,7 @@ stop:
 stop-backend:
 	@if $(call _port_up,8000); then \
 		pid=$$(cat $(BACKEND_PID) 2>/dev/null); \
+		[ -z "$$pid" ] && pid=$$($(call _port_pid,8000)); \
 		kill -- -"$$pid" 2>/dev/null; rm -f $(BACKEND_PID); echo "backend stopped"; \
 	else \
 		rm -f $(BACKEND_PID); echo "backend not running"; \
@@ -101,14 +120,15 @@ stop-backend:
 stop-frontend:
 	@if $(call _port_up,5173); then \
 		pid=$$(cat $(FRONTEND_PID) 2>/dev/null); \
+		[ -z "$$pid" ] && pid=$$($(call _port_pid,5173)); \
 		kill -- -"$$pid" 2>/dev/null; rm -f $(FRONTEND_PID); echo "frontend stopped"; \
 	else \
 		rm -f $(FRONTEND_PID); echo "frontend not running"; \
 	fi
 
 stop-tunnel:
-	@if pgrep -f "[c]loudflared tunnel run" >/dev/null 2>&1; then \
-		pid=$$(cat $(TUNNEL_PID) 2>/dev/null); \
+	@pid=$$(cat $(TUNNEL_PID) 2>/dev/null); \
+	if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
 		kill -- -"$$pid" 2>/dev/null; rm -f $(TUNNEL_PID); echo "tunnel stopped"; \
 	else \
 		rm -f $(TUNNEL_PID); echo "tunnel not running"; \
