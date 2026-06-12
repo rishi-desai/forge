@@ -26,7 +26,7 @@ _port_up = ss -tlnp 2>/dev/null | grep -q ':$(1)'
 _port_pid = ss -tlnp 2>/dev/null | grep ':$(1)' | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2
 
 # Elapsed time for PID from the system process table.
-_etime = ps -o etime= -p '$(1)' 2>/dev/null | tr -d ' '
+_etime = ps -o etime= -p "$(1)" 2>/dev/null | tr -d ' '
 
 # ── status ────────────────────────────────────────────────────────────────────
 status:
