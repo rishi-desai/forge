@@ -1,10 +1,10 @@
 {
   "account": {
-    "starting_cash": 10000,
+    "starting_cash": 10000.0,
     "account_type": "cash"
   },
   "risk": {
-    "profile": "moderate",
+    "profile": "aggressive",
     "custom_overrides": {}
   },
   "conviction_overrides": {

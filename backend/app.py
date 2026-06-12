@@ -16,6 +16,10 @@ import os
 import threading
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -31,10 +35,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
 
 app = FastAPI(title="AI Trading System", version="1.0")
+_extra_origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
-                   os.environ.get("FRONTEND_ORIGIN", "")],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"] + _extra_origins,
     allow_methods=["*"], allow_headers=["*"],
 )
 

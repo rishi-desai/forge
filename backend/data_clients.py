@@ -100,9 +100,15 @@ class FinnhubClient:
 
     def candles(self, symbol: str, resolution: str = "D", days: int = 320) -> Optional[dict]:
         now = int(time.time())
-        return cached(f"c:{symbol}:{resolution}", 300, lambda: self._get(
-            "/stock/candle", symbol=symbol, resolution=resolution,
-            **{"from": now - days * 86400, "to": now}))
+        try:
+            result = cached(f"c:{symbol}:{resolution}", 300, lambda: self._get(
+                "/stock/candle", symbol=symbol, resolution=resolution,
+                **{"from": now - days * 86400, "to": now}))
+            if result and result.get("s") == "ok":
+                return result
+        except Exception:
+            pass
+        return _alpaca_bars().candles(symbol, resolution, days)
 
     def earnings_calendar(self, frm: str, to: str, symbol: str = "") -> dict:
         return cached(f"earn:{frm}:{to}:{symbol}", 3600, lambda: self._get(
@@ -156,6 +162,64 @@ class FinnhubStream:
                 time.sleep(5)  # reconnect backoff
 
         threading.Thread(target=run, daemon=True, name="finnhub-ws").start()
+
+
+# ----------------------------------------------------------------------------- Alpaca historical bars (candle fallback)
+
+class AlpacaBarClient:
+    """Alpaca historical bar data in Finnhub candle-dict format so callers need
+    no changes. Used automatically when Finnhub returns 403 / no_data."""
+
+    _TF_MAP = {"D": ("Day", 1), "W": ("Week", 1), "60": ("Hour", 1), "M": ("Month", 1)}
+
+    def __init__(self):
+        api_key = os.environ.get("ALPACA_API_KEY", "")
+        secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+        self._client = None
+        if api_key and secret_key:
+            try:
+                from alpaca.data.historical import StockHistoricalDataClient
+                self._client = StockHistoricalDataClient(
+                    api_key=api_key, secret_key=secret_key)
+            except Exception:
+                pass
+
+    def candles(self, symbol: str, resolution: str = "D", days: int = 320) -> Optional[dict]:
+        if not self._client:
+            return None
+        try:
+            import datetime as _dt
+            from alpaca.data.requests import StockBarsRequest
+            from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+            unit_name, mult = self._TF_MAP.get(resolution, ("Day", 1))
+            tf = TimeFrame(mult, getattr(TimeFrameUnit, unit_name))
+            start = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days + 5)
+            req = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf, start=start)
+            barset = self._client.get_stock_bars(req)
+            bars = barset.data.get(symbol, [])
+            if not bars:
+                return None
+            return {
+                "s": "ok",
+                "t": [int(b.timestamp.timestamp()) for b in bars],
+                "o": [float(b.open)   for b in bars],
+                "h": [float(b.high)   for b in bars],
+                "l": [float(b.low)    for b in bars],
+                "c": [float(b.close)  for b in bars],
+                "v": [float(b.volume) for b in bars],
+            }
+        except Exception:
+            return None
+
+
+_alpaca_bar_instance: Optional[AlpacaBarClient] = None
+
+
+def _alpaca_bars() -> AlpacaBarClient:
+    global _alpaca_bar_instance
+    if _alpaca_bar_instance is None:
+        _alpaca_bar_instance = AlpacaBarClient()
+    return _alpaca_bar_instance
 
 
 # ----------------------------------------------------------------------------- FRED
