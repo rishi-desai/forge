@@ -1,4 +1,4 @@
-# Autonomous AI Paper-Trading System
+# Forge
 
 Fully autonomous options-first paper trading on an Alpaca **cash** account, with a
 self-learning signal engine, a tiered high-conviction override system, and a live
