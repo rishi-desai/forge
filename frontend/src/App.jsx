@@ -90,7 +90,7 @@ export default function App() {
     <div className="min-h-screen flex">
       <nav className="w-44 shrink-0 border-r border-line bg-well/40 p-3 flex flex-col gap-1">
         <div className="px-2 py-3">
-          <div className="text-sm font-semibold tracking-tight">Autonomous Desk</div>
+          <div className="text-sm font-semibold tracking-tight">Forge</div>
           <div className="text-[11px] text-faint">paper · cash account</div>
         </div>
         {VIEWS.map(([key, label]) => (
