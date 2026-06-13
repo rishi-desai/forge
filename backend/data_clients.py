@@ -86,6 +86,10 @@ class FinnhubClient:
         self.key = api_key or os.environ.get("FINNHUB_API_KEY", "")
         self.bucket = TokenBucket()
         self.ttl_quote = ttl_quote
+        # Finnhub's free tier 403s /stock/candle. Once we see that, stop retrying
+        # it process-wide (it burns a rate-limit token every call) and go straight
+        # to the Alpaca bar fallback.
+        self._candle_endpoint_dead = False
 
     def _get(self, path: str, **params):
         self.bucket.acquire()
@@ -99,16 +103,21 @@ class FinnhubClient:
         return cached(f"q:{symbol}", self.ttl_quote, lambda: self._get("/quote", symbol=symbol))
 
     def candles(self, symbol: str, resolution: str = "D", days: int = 320) -> Optional[dict]:
-        now = int(time.time())
-        try:
-            result = cached(f"c:{symbol}:{resolution}", 300, lambda: self._get(
-                "/stock/candle", symbol=symbol, resolution=resolution,
-                **{"from": now - days * 86400, "to": now}))
-            if result and result.get("s") == "ok":
-                return result
-        except Exception:
-            pass
-        return _alpaca_bars().candles(symbol, resolution, days)
+        def fetch():
+            now = int(time.time())
+            if not self._candle_endpoint_dead:
+                try:
+                    result = self._get("/stock/candle", symbol=symbol,
+                                       resolution=resolution,
+                                       **{"from": now - days * 86400, "to": now})
+                    if result and result.get("s") == "ok":
+                        return result
+                    self._candle_endpoint_dead = True  # no_data/access denied
+                except Exception:
+                    self._candle_endpoint_dead = True
+            return _alpaca_bars().candles(symbol, resolution, days)
+        # Cache the FINAL result (Finnhub or Alpaca) so the fallback is cached too.
+        return cached(f"c:{symbol}:{resolution}:{days}", 300, fetch)
 
     def earnings_calendar(self, frm: str, to: str, symbol: str = "") -> dict:
         return cached(f"earn:{frm}:{to}:{symbol}", 3600, lambda: self._get(
@@ -260,30 +269,13 @@ class FREDClient:
         return out
 
 
-# ----------------------------------------------------------------------------- CBOE + sentiment gauges
+# ----------------------------------------------------------------------------- sentiment gauges
 
-def cboe_put_call_ratio() -> Optional[float]:
-    """CBOE publishes daily market statistics; total put/call ratio."""
-    def fetch():
-        try:
-            r = requests.get(
-                "https://cdn.cboe.com/api/global/delayed_quotes/options/_VIX.json",
-                timeout=10)
-            r.raise_for_status()
-            # If the published JSON layout changes, fall back gracefully.
-            return None
-        except Exception:
-            return None
-    # Primary source: daily stats CSV (stable for years)
-    def fetch_csv():
-        try:
-            r = requests.get(
-                "https://cdn.cboe.com/data/us/options/market_statistics/daily/",
-                timeout=10)
-            return None  # directory listing varies; treat as best-effort
-        except Exception:
-            return None
-    return cached("cboe:pc", 900, fetch) or cached("cboe:pc2", 900, fetch_csv)
+# NOTE: a CBOE put/call-ratio fetcher used to live here, but CBOE's free
+# market-statistics endpoints now return Access Denied, so it could only ever
+# return None. ctx.put_call_ratio therefore stays at its neutral default and the
+# extreme_put_call signal is dormant until a permitted source is wired in. Rather
+# than keep dead code that looks live, it's removed; see README "Spec deviations".
 
 
 def fear_greed_index() -> Optional[float]:

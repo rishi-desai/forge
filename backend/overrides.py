@@ -107,6 +107,7 @@ class ApprovedOverride:
     approval_id: Optional[str] = None
     expires_at: Optional[dt.datetime] = None
     approved: Optional[bool] = None  # None = pending
+    _symbol: Optional[str] = None    # for de-duping pending modals per symbol
 
     @property
     def tier_spec(self) -> dict:
@@ -151,6 +152,15 @@ class OverrideManager:
         if tier is None:
             return None
 
+        # Don't stack a second approval modal for a setup already awaiting the
+        # user — the next scan re-qualifies the same symbol and would otherwise
+        # queue a fresh approval_id every cycle.
+        symbol = getattr(trade_signal, "symbol", None)
+        if any(p.requires_approval and p.approved is None
+               and getattr(p, "_symbol", None) == symbol
+               for p in self.pending.values()):
+            return None
+
         if not self.config.get("enabled", False):
             self._log_rejection(tier, met, "overrides disabled in config", trade_signal)
             return None
@@ -173,7 +183,7 @@ class OverrideManager:
             return None
 
         ov = ApprovedOverride(tier=tier, criteria=criteria, criteria_met=met,
-                              normal_size=normal_size)
+                              normal_size=normal_size, _symbol=symbol)
 
         needs_approval = (
             tier == "ALL_IN" and self.config.get("all_in_requires_approval", True)

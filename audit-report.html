@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — System Audit Report (2026-06-12)</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2129; --border: #30363d;
+    --text: #e6edf3; --mute: #8b949e; --accent: #58a6ff;
+    --crit: #f85149; --high: #f0883e; --med: #d29922; --low: #8b949e; --good: #3fb950;
+    --code-bg: #0a0e14;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin: 48px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 0; }
+  .sub { color: var(--mute); margin-bottom: 24px; }
+  .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 24px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+  .stat .n { font-size: 26px; font-weight: 700; }
+  .stat .l { font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: .05em; }
+  .issue { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin: 14px 0; }
+  .issue header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0; }
+  .b-crit { background: rgba(248,81,73,.15); color: var(--crit); border: 1px solid var(--crit); }
+  .b-high { background: rgba(240,136,62,.15); color: var(--high); border: 1px solid var(--high); }
+  .b-med  { background: rgba(210,153,34,.15); color: var(--med); border: 1px solid var(--med); }
+  .b-low  { background: rgba(139,148,158,.15); color: var(--low); border: 1px solid var(--low); }
+  .b-good { background: rgba(63,185,80,.15); color: var(--good); border: 1px solid var(--good); }
+  .loc { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--accent); margin-bottom: 8px; }
+  code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; line-height: 1.5; }
+  pre code { background: none; border: none; padding: 0; }
+  .label { font-size: 12px; font-weight: 700; color: var(--mute); text-transform: uppercase; letter-spacing: .06em; margin: 12px 0 4px; }
+  .fix { border-left: 3px solid var(--good); padding-left: 14px; margin: 8px 0; }
+  .fix .opt { color: var(--good); font-weight: 600; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--mute); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  a { color: var(--accent); text-decoration: none; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+  .toc ol { margin: 4px 0; padding-left: 24px; }
+  .pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Forge — Comprehensive System Audit</h1>
+<div class="sub">Autonomous options paper-trading system · audited 2026-06-12 · branch <code>main</code> @ <code>98e9a45</code></div>
+
+<div class="summary">
+  <div class="stat"><div class="n" style="color:var(--crit)">4</div><div class="l">Critical</div></div>
+  <div class="stat"><div class="n" style="color:var(--high)">5</div><div class="l">High</div></div>
+  <div class="stat"><div class="n" style="color:var(--med)">7</div><div class="l">Medium</div></div>
+  <div class="stat"><div class="n" style="color:var(--low)">5</div><div class="l">Low / Docs</div></div>
+  <div class="stat"><div class="n" style="color:var(--good)">118</div><div class="l">Tests passing</div></div>
+</div>
+
+<div class="issue" style="border-color:var(--good)">
+  <header><span class="badge b-good">Update · 2026-06-12</span><h3>Fixes applied in this pass</h3></header>
+  <p>All four critical and all five high findings are <b>fixed</b>; the medium/low set is mostly
+  fixed with three items deliberately deferred (noted below). Test count went 104 → <b>118</b>: a new
+  <code>tests/test_orchestrator.py</code> now covers the override approval→execution seam, expiry/stop
+  exits with Black-Scholes marks, the pending-modal de-dupe, and unsettled-aware equity — the live
+  wiring that previously had zero coverage. Every backend module imports cleanly.</p>
+  <table>
+    <tr><th>Status</th><th>Findings</th></tr>
+    <tr><td><span class="badge b-good">Fixed</span></td><td>1, 2, 3, 4, 5, 6, 7, 8 (partial-wire), 9, 11, 12 (force-close + profit-target), 14, 15, 16, 17, 18, 19, 21</td></tr>
+    <tr><td><span class="badge b-med">Partial / by design</span></td><td><b>8</b> — DXY, FX, and relative-strength signals wired; put/call, VIX-term, sector-rotation, IV-crush, and options-flow stay dormant (sources unavailable on free tiers) and are now honestly documented rather than silently dead. <b>10</b> — vacuous 0.30 gate replaced with a confluence rule (≥2 signals across ≥2 categories + 0.40 floor); the composite formula itself was left intact to preserve the spec worked-example calibration.</td></tr>
+    <tr><td><span class="badge b-low">Deferred</span></td><td><b>12</b> (remaining keys <code>cache_ttl_seconds</code>/<code>finnhub_ws_symbols</code>/<code>fred_series</code> — still hardcoded; harmless, documented). <b>13</b> (covered by the Makefile <code>dev</code>/<code>start</code> split). <b>20</b> (strike-increment / holiday-expiry approximations — correct fix needs the live option chain, same work as #2's full version).</td></tr>
+  </table>
+  <p style="color:var(--mute);font-size:13px;margin-bottom:0">The per-finding detail below is the original audit, kept verbatim for traceability. Where a finding says
+  "recommended," that's the option that was implemented unless the deferred/partial note above says otherwise.</p>
+</div>
+
+<h2>Verdict at a glance</h2>
+<p>The <b>offline math layer is solid</b>: all 104 tests pass (51 core + 30 ML + 23 regime), the sizing
+formula matches the spec's worked examples, the settled-cash T+1 ledger is correct, the universal
+$10k cap genuinely binds everything, and the ML/regime fallback design is exactly as documented —
+every failure path degrades to rules.</p>
+<p>The problems are concentrated in the <b>live wiring between layers</b> — the orchestrator/app seam
+that no test covers. Three of the four critical findings mean the bot, as deployed, will not behave
+the way the README promises: <b>approved high-conviction trades are silently dropped</b>,
+<b>positions can effectively never exit</b>, and the <b>public Cloudflare tunnel exposes unauthenticated
+control endpoints</b>. None of these are visible in tests because the tests deliberately stop at the
+pure-math boundary.</p>
+
+<div class="toc">
+  <b>Findings index</b>
+  <ol>
+    <li><a href="#c1">Approved/expired overrides never execute a trade</a> <span class="badge b-crit pill">critical</span></li>
+    <li><a href="#c2">Position exits are effectively dead (mark = cost, no expiry handling)</a> <span class="badge b-crit pill">critical</span></li>
+    <li><a href="#c3">Public tunnel exposes unauthenticated control endpoints</a> <span class="badge b-crit pill">critical</span></li>
+    <li><a href="#c4">close_position() closes the underlying symbol, not the option legs</a> <span class="badge b-crit pill">critical</span></li>
+    <li><a href="#h1">Weekly-loss size-halving can never trigger</a> <span class="badge b-high pill">high</span></li>
+    <li><a href="#h2">Equity calc ignores unsettled proceeds → false daily halts</a> <span class="badge b-high pill">high</span></li>
+    <li><a href="#h3">Override sizing double-applies the size-halving multiplier</a> <span class="badge b-high pill">high</span></li>
+    <li><a href="#h4">Multiple spec'd signals are permanently dead (unwired inputs)</a> <span class="badge b-high pill">high</span></li>
+    <li><a href="#h5">Rejected-override log writes duplicates every scan</a> <span class="badge b-high pill">high</span></li>
+    <li><a href="#m1">The 0.30 trade threshold is vacuous on the rules path</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m2">Pending ALL-IN re-queues a new modal every scan</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m3">Config keys exist but are not wired</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m4">Makefile runs the live bot under --reload</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m5">Finnhub candle fallback wastes the rate budget every call</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m6">Settings PUT can persist config that crashes the next boot</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#m7">Weekly Sharpe annualizes 5-minute returns as daily</a> <span class="badge b-med pill">medium</span></li>
+    <li><a href="#l1">README/docs drift</a> <span class="badge b-low pill">low</span></li>
+    <li><a href="#l2">Broker init crashes if Alpaca installed but keys absent</a> <span class="badge b-low pill">low</span></li>
+    <li><a href="#l3">Dead code: CBOE put/call fetcher, learning placeholder</a> <span class="badge b-low pill">low</span></li>
+    <li><a href="#l4">Strike increments / expiry holidays slightly off</a> <span class="badge b-low pill">low</span></li>
+    <li><a href="#l5">Stale pending-override payloads accumulate in the API</a> <span class="badge b-low pill">low</span></li>
+  </ol>
+</div>
+
+<h2>Critical</h2>
+
+<div class="issue" id="c1">
+  <header><span class="badge b-crit">Critical</span><h3>1. Approved (or expired) conviction overrides never execute a trade</h3></header>
+  <div class="loc">backend/orchestrator.py:255-265, 302-309 · backend/app.py:241-260 · frontend/src/App.jsx:78-82</div>
+  <p>When an ALL-IN (or any approval-gated tier) fires, <code>execute_candidate()</code> emits the
+  <code>override_pending</code> event and <b>returns</b>, discarding the sized candidate. The comment says
+  <i>"executed on approval (app.py) or as normal size on expiry"</i> — but neither happens:</p>
+  <ul>
+    <li><code>app.py approve_override()</code> calls <code>resolve_pending_override()</code>, which just pops the
+        override and returns it. <b>No code path ever calls <code>_finalize_and_submit()</code></b> with the approved
+        override. The TradeCandidate isn't even retained — <code>_pending_payloads</code> holds only the display dict.</li>
+    <li>On expiry, <code>run_forever()</code> logs <i>"reverting to normal sizing"</i> but never submits the
+        normal-size trade either.</li>
+    <li>The dashboard makes it worse: on approve, the UI toasts <b>"Executing at override size"</b> — the user
+        believes a 50%-of-cash trade went in. It didn't. The override is also never recorded via
+        <code>record_execution()</code>, so rate-limit counters stay wrong too.</li>
+  </ul>
+  <p>This is the exact opposite of the spec's intent: the system's <i>highest-conviction</i> setups are the
+  only ones that never trade.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A (recommended):</span> retain the full execution context server-side.
+  Store <code>{candidate, normal_size, open_positions_snapshot}</code> keyed by <code>approval_id</code> on the
+  Orchestrator (not in app.py). On approve, call <code>_finalize_and_submit(cand, override_size, …)</code> from a
+  method the API invokes (guard with a lock since it runs on the API thread while the bot loop runs). On expiry in
+  <code>expire_stale()</code>, submit at <code>normal_size</code> as documented. Re-validate freshness first — if the
+  quote moved or &gt;N minutes passed, re-run <code>check_capacity</code> and re-price.</div>
+  <div class="fix"><span class="opt">Option B (simpler, behavior change):</span> drop deferred execution entirely.
+  On approval-required tiers, trade immediately at <i>normal</i> size, and treat approval as an <i>upsize</i> of the
+  open position (buy more contracts). No stored state, no staleness problem — but two orders instead of one.</div>
+  <div class="fix"><span class="opt">Either way:</span> add an orchestrator-level test that walks
+  signal → pending → approve → order submitted (with a dry-run broker), and one for expiry → normal-size order.
+  This whole seam is currently untested.</div>
+</div>
+
+<div class="issue" id="c2">
+  <header><span class="badge b-crit">Critical</span><h3>2. Position exits are effectively dead — nothing ever closes except 0DTE</h3></header>
+  <div class="loc">backend/orchestrator.py:313-361 (<code>manage_positions</code>, <code>_estimate_mark</code>)</div>
+  <p><code>_estimate_mark()</code> returns <code>cost</code> unconditionally (<code>drift = 0.0</code>), so
+  <code>pnl</code> is always 0 for every open position. Consequences, chained:</p>
+  <ul>
+    <li>Profile stop-losses never fire (<code>pnl &lt;= -stop × cost</code> is never true).</li>
+    <li>The 50%-of-credit profit target never fires.</li>
+    <li>The 8% equity stop never fires.</li>
+    <li><b>There is no expiry handling at all</b> — an option past its expiry date stays
+        <code>status='open'</code> in the DB forever. Deployed capital never frees, so the concurrency,
+        correlation, and deployment caps progressively choke off all new trading. On the Alpaca side the
+        contracts expire/exercise, so the local ledger and the broker permanently diverge.</li>
+  </ul>
+  <p>The README discloses the conservative mark ("positions held at cost") but not the implication that
+  <b>every management rule in section 7 is inert</b>. The learning loop (Layer 5) also starves: with no closed
+  trades there are no lessons, no weight updates, and the ML engine never reaches its 30-trade bootstrap.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A (recommended):</span> wire real option marks. You already depend on
+  <code>alpaca-py</code>; use <code>OptionHistoricalDataClient.get_option_latest_quote()</code> with the OCC
+  symbols stored in <code>legs_json</code> to compute a true per-position mark (sum legs, signed by side).
+  This also fixes the conviction criteria and unrealized P&amp;L on the dashboard.</div>
+  <div class="fix"><span class="opt">Option B (interim, zero new APIs):</span> approximate the mark with the
+  Black-Scholes machinery you already have — reprice each leg with <code>bs_price()</code> using the current
+  underlying quote, remaining DTE, and the entry IV proxy. Imperfect, but it makes stops/targets/learning live
+  today instead of never.</div>
+  <div class="fix"><span class="opt">Required regardless:</span> add an expiry sweep to
+  <code>manage_positions()</code> — any trade with <code>expiry &lt; today</code> gets closed at intrinsic (or 0)
+  and a <code>db.close_trade()</code>. Also reconcile against <code>broker.positions()</code> daily so local state
+  can't drift from Alpaca.</div>
+</div>
+
+<div class="issue" id="c3">
+  <header><span class="badge b-crit">Critical</span><h3>3. Public Cloudflare tunnel exposes unauthenticated control endpoints</h3></header>
+  <div class="loc">cloudflared.yml · backend/app.py:38-43, 218-236, 241-260 · Makefile (tunnel targets)</div>
+  <p>The tunnel publishes <code>api.forge.rishid.com → localhost:8000</code>. The FastAPI app has
+  <b>no authentication of any kind</b>. Anyone who finds the hostname can:</p>
+  <ul>
+    <li><code>PUT /api/settings</code> — switch your risk profile to <code>max_aggression</code>, change starting
+        cash, rewrite <code>custom_overrides</code> and <code>conviction_overrides</code> (persisted to
+        <code>config.json</code> on disk).</li>
+    <li><code>POST /api/overrides/{id}/approve</code> — approve an ALL-IN (50% of cash) trade meant for you.</li>
+    <li><code>POST /api/ml/retrain</code>, <code>POST /api/reports/weekly/run</code> — burn CPU at will.</li>
+    <li>Read every trade, signal, weight, and event via the GET endpoints and the open WebSocket.</li>
+  </ul>
+  <p>CORS is not a defense here — it only constrains browsers, not <code>curl</code>. Today it's paper money and
+  a config file; it's still your API keys' rate budgets, your disk, and a system you intend to trust with
+  real-money decisions someday.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A (recommended, zero code):</span> put Cloudflare Access in front of
+  the hostname (free for personal use) — one-click SSO/email-pin gate at the edge; the backend stays untouched.</div>
+  <div class="fix"><span class="opt">Option B (app-level):</span> add a bearer-token check — <code>API_TOKEN</code>
+  in <code>.env</code>, a FastAPI dependency that rejects mutating routes (and ideally all routes) without
+  <code>Authorization: Bearer …</code>, and the matching header in <code>frontend/src/api.js</code>. ~20 lines.</div>
+  <div class="fix"><span class="opt">Option C (minimum):</span> if the tunnel is only for your own remote access,
+  scope it: keep GETs public-ish but require the token on every <code>PUT</code>/<code>POST</code>, and rename the
+  hostname to something unguessable. Weaker than A/B.</div>
+</div>
+
+<div class="issue" id="c4">
+  <header><span class="badge b-crit">Critical</span><h3>4. <code>close_position()</code> targets the underlying symbol, not the option legs</h3></header>
+  <div class="loc">backend/orchestrator.py:344 · backend/alpaca_exec.py:125-133</div>
+  <p><code>manage_positions()</code> calls <code>self.broker.close_position(t["symbol"], …)</code> with the
+  <b>underlying</b> ticker (e.g. <code>"SPY"</code>). In non-dry-run mode that becomes
+  <code>TradingClient.close_position("SPY")</code> — but the actual Alpaca positions are the OCC option
+  contracts (e.g. <code>SPY260619P00585000</code> × 4 legs for a condor). The call will 404 (no SPY equity
+  position) or, worse, liquidate an unrelated SPY share position. Meanwhile the local DB marks the trade
+  closed and credits the ledger with estimated proceeds — full divergence from the broker.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A (recommended):</span> close by legs. Parse <code>legs_json</code>
+  from the trade row and submit the inverse order: single-leg → <code>close_position(occ_symbol)</code>;
+  multi-leg → an MLEG order with <code>PositionIntent.SELL_TO_CLOSE</code>/<code>BUY_TO_CLOSE</code> mirroring the
+  open order (you already build MLEG opens in <code>submit_candidate</code>, so this is symmetric code).</div>
+  <div class="fix"><span class="opt">Also:</span> only call <code>db.close_trade()</code> and
+  <code>ledger.receive_proceeds()</code> after the close order is accepted (check the returned status), and use
+  the actual fill value as proceeds when available rather than the estimate.</div>
+</div>
+
+<h2>High</h2>
+
+<div class="issue" id="h1">
+  <header><span class="badge b-high">High</span><h3>5. Weekly-loss size-halving can never trigger</h3></header>
+  <div class="loc">backend/orchestrator.py:379-381 · backend/risk.py:352-356</div>
+  <p><code>run_forever()</code> calls <code>self.guards.start_day(eq)</code> every day with no
+  <code>week_start_equity</code>, so <code>GuardState.week_start_equity</code> is reset to <i>today's</i> equity
+  each morning. The Wednesday weekly-drawdown check then compares today against today — always ~0%. The README's
+  promised "Wednesday weekly-loss size-halving" is dead in live operation (the unit test passes because it
+  injects <code>week_start_equity</code> manually).</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> persist Monday's opening equity. On day-roll, if
+  <code>now.weekday() == 0</code> (or no stored value for the current ISO week), write the equity to the DB
+  (e.g. an <code>events</code>/<code>kv</code> row or reuse <code>equity_curve</code>'s first Monday snapshot) and pass it:
+  <code>self.guards.start_day(eq, week_start_equity=monday_eq)</code>. Persisting also survives restarts, which the
+  current in-memory <code>GuardState</code> doesn't.</div>
+</div>
+
+<div class="issue" id="h2">
+  <header><span class="badge b-high">High</span><h3>6. Equity calculation ignores unsettled proceeds → false daily-drawdown halts</h3></header>
+  <div class="loc">backend/orchestrator.py:197-199, 379-380 · backend/risk.py:241-275</div>
+  <p>Equity is computed as <code>ledger.available() + deployed</code>. When a position closes, its cost leaves
+  <code>deployed</code> immediately but the proceeds sit in <code>ledger.unsettled</code> until T+1 — invisible to
+  this formula. Closing a $1,000 position on a $10,000 account makes measured equity drop 10% instantly, which
+  <b>trips the daily-drawdown circuit breaker on the aggressive profile and halts trading for the day</b> even on a
+  profitable close. The same distortion feeds <code>snapshot_equity()</code>, so the dashboard equity curve dips on
+  every close and recovers the next day.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> expose pending cash on the ledger —
+  <code>def total(self): return self.settled + sum(amt for _, amt in self.unsettled)</code> — and use
+  <code>ledger.total() + deployed</code> for equity/guards/snapshots, keeping <code>available()</code> strictly for
+  spend-validation. One method, three call sites.</div>
+</div>
+
+<div class="issue" id="h3">
+  <header><span class="badge b-high">High</span><h3>7. Override sizing double-applies the weekly size-halving multiplier</h3></header>
+  <div class="loc">backend/orchestrator.py:248-251, 267-269 · backend/risk.py:216-229</div>
+  <p><code>normal</code> is computed <i>with</i> <code>guards.size_multiplier()</code> applied, and that value is
+  stored as <code>ov.normal_size</code>. For STRONG/MAX, <code>compute_override_size()</code> derives the override
+  size from <code>ov.normal_size</code> — already halved — and then line 269 multiplies by the guard multiplier
+  <b>again</b>. When sizes are halved (once #5 is fixed), overrides would trade at 25% instead of 50%.
+  Latent today only because #5 means the multiplier is never 0.5.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> apply the multiplier exactly once at the end. Pass the
+  <i>unhalved</i> normal size into <code>overrides.evaluate()</code> (it's also what the spec's tier math expects as
+  "normal size"), and multiply the final <code>sized</code> by <code>size_multiplier()</code> in one place. Add a
+  test: halved guards + STRONG override ⇒ exactly <code>normal × 1.5 × 0.5</code>.</div>
+</div>
+
+<div class="issue" id="h4">
+  <header><span class="badge b-high">High</span><h3>8. Several spec'd signals and conviction criteria are permanently dead — inputs never wired</h3></header>
+  <div class="loc">backend/orchestrator.py:124-138, 165-180 · backend/signals.py:100-114, 130-146, 235-287 · backend/data_clients.py:305-322</div>
+  <p>The rule engine implements the full spec §2.2 surface, but the orchestrator never feeds several inputs, so
+  those rules can never fire in live operation:</p>
+  <table>
+    <tr><th>Dead input</th><th>Stuck at</th><th>Silently kills</th></tr>
+    <tr><td><code>ctx.put_call_ratio</code></td><td>default 0.9 (never updated; <code>cboe_put_call_ratio()</code> always returns None and is never called)</td><td><code>extreme_put_call</code> signal + a constant ML feature</td></tr>
+    <tr><td><code>ctx.vix_term</code></td><td>{} </td><td><code>vix_backwardation</code> (the "panic regime" early-warning)</td></tr>
+    <tr><td><code>ctx.dxy_trend</code>, FX dict in <code>refresh_foreign()</code></td><td>neutral / {} (fx passed as empty dict)</td><td><code>dxy_strength</code>, <code>usdjpy_riskoff</code>, <code>eurusd_riskoff</code></td></tr>
+    <tr><td><code>snap.rs_rank</code></td><td>default 50</td><td><code>canslim_breakout</code> (needs &gt; 85)</td></tr>
+    <tr><td><code>snap.sector_outperform_days</code></td><td>0</td><td><code>sector_rotation</code></td></tr>
+    <tr><td><code>snap.iv_crush_history</code></td><td>False</td><td><code>pre_earnings_iv_crush</code> condor entry</td></tr>
+    <tr><td><code>OptionsFlowAdapter.fetch()</code></td><td>[] (documented stub)</td><td>both institutional-flow signals <b>and conviction criterion #2</b>, making 7/7 ALL-IN unreachable and 6/7 MAX the practical ceiling</td></tr>
+  </table>
+  <p>The flow adapter being a stub is a documented deviation — fine. The rest is undocumented drift: the README
+  presents these as active parts of the engine, and the ALL-IN tier (modal, approval flow, weekly limits) is
+  elaborate machinery for a state the system cannot reach.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A (wire the cheap ones):</span> all of these are computable from data
+  you already fetch: DXY trend from FRED <code>DTWEXBGS</code> (already in the macro snapshot, value discarded);
+  <code>rs_rank</code> and <code>sector_outperform_days</code> from the SPY + symbol candles you already pull each
+  scan; FX moves from Finnhub forex quotes (<code>OANDA:USD_JPY</code> etc.); put/call ratio from CBOE's published
+  daily CSV (implement the fetcher properly or delete it). VIX term structure needs <code>VIX9D</code>/<code>VIX3M</code>
+  (FRED has <code>VIXCLS</code> only — Yahoo/CBOE delayed JSON can supply the rest).</div>
+  <div class="fix"><span class="opt">Option B (be honest in the docs):</span> for anything you choose not to wire,
+  mark the rule disabled in code (don't emit it) and move it to the README's "Spec deviations" list, and gate the
+  ALL-IN tier's reachability claim accordingly. A dead rule that looks alive is worse than an absent one — it
+  poisons the learning loop's denominator and your trust in the dashboard.</div>
+</div>
+
+<div class="issue" id="h5">
+  <header><span class="badge b-high">High</span><h3>9. Rejected-override log inserts duplicates on every evaluation</h3></header>
+  <div class="loc">backend/orchestrator.py:252-254 · backend/overrides.py:216-223</div>
+  <p><code>execute_candidate()</code> runs <code>for rec in self.overrides.rejected_log[-3:]:
+  db.log_rejected_override(rec)</code> after <i>every</i> evaluation, re-inserting the last three in-memory
+  rejections each time any candidate is evaluated. After a day of scans, one real rejection becomes hundreds of
+  DB rows, and the dashboard's "rejected overrides" view becomes noise. <code>rejected_log</code> also grows
+  unbounded in memory.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> make it a drain: <code>while self.overrides.rejected_log:
+  db.log_rejected_override(self.overrides.rejected_log.pop(0))</code> — or better, have
+  <code>_log_rejection()</code> write to the DB directly and delete the in-memory list entirely (db is already
+  imported everywhere else).</div>
+</div>
+
+<h2>Medium</h2>
+
+<div class="issue" id="m1">
+  <header><span class="badge b-med">Medium</span><h3>10. The 0.30 composite threshold is vacuous on the rules path</h3></header>
+  <div class="loc">backend/signals.py:320-321 · backend/orchestrator.py:221 · backend/risk.py:139</div>
+  <p><code>strength = 0.30 + 0.70 × (…)</code> — the formula's floor equals the trade threshold, so <b>any
+  single fired rule</b> (including a lone 0.45-strength contrarian macro signal) clears both the
+  <code>comp["strength"] &lt; 0.30</code> gate and <code>MIN_SIGNAL_STRENGTH_TO_TRADE</code>. The README's
+  "Composite &lt; 0.30 → no trade" filter never filters anything. Note the <code>0dte_vwap_trend</code> rule fires
+  on SPY/QQQ on essentially every scan after 10:30 (price is always above or below the SMA20 proxy), so combined
+  with this floor the bot will steadily open 0DTE spreads until the concurrency cap absorbs them.
+  Only the ML path (raw probability, can be &lt; 0.30) makes the gate meaningful.</p>
+  <div class="label">Fix options</div>
+  <div class="fix"><span class="opt">Option A:</span> remove the additive floor — <code>strength =
+  0.70 × (0.5 × dominance + 0.5 × magnitude)</code> recalibrated so multi-signal confluence lands where 0.30 means
+  something — then re-derive the spec worked-example tests.</div>
+  <div class="fix"><span class="opt">Option B (smaller blast radius):</span> keep the formula, raise the trade
+  gate to a calibrated value (e.g. 0.45) and/or require ≥2 fired signals from ≥2 categories before
+  <code>select_strategy</code> runs. Also give <code>0dte_vwap_trend</code> a real trend condition (distance from
+  VWAP, persistence) so it isn't a coin-flip generator.</div>
+</div>
+
+<div class="issue" id="m2">
+  <header><span class="badge b-med">Medium</span><h3>11. A pending ALL-IN re-queues a brand-new approval modal every scan</h3></header>
+  <div class="loc">backend/overrides.py:141-191 · backend/orchestrator.py:207-245</div>
+  <p>While an approval is pending, the next 5-minute scan re-evaluates the same symbol, qualifies again, and
+  <code>evaluate()</code> happily creates a <i>second</i> pending override with a new ID (rate limits only count
+  <i>executed</i> overrides). The user gets stacked modals for the same trade; approving an old one (post-#1 fix)
+  could double-execute.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> in <code>evaluate()</code>, return None (or the existing pending
+  override) when <code>self.pending</code> already contains an entry for the same symbol+tier. One containment
+  check.</div>
+</div>
+
+<div class="issue" id="m3">
+  <header><span class="badge b-med">Medium</span><h3>12. Config keys exist but are not wired to the code that implements them</h3></header>
+  <div class="loc">config.json · backend/orchestrator.py:315, 339 · backend/data_clients.py</div>
+  <table>
+    <tr><th>Key</th><th>Reality</th></tr>
+    <tr><td><code>trading.zero_dte_force_close_et: "15:00"</code></td><td>hardcoded <code>dt.time(15, 0)</code> in orchestrator.py:315</td></tr>
+    <tr><td><code>trading.credit_trade_profit_target_pct: 0.5</code></td><td>hardcoded <code>0.5</code> in orchestrator.py:339</td></tr>
+    <tr><td><code>data.cache_ttl_seconds.*</code></td><td>TTLs hardcoded at each call site in data_clients.py</td></tr>
+    <tr><td><code>data.finnhub_ws_symbols: 30</code></td><td><code>FinnhubStream</code> is never instantiated anywhere</td></tr>
+    <tr><td><code>data.fred_series</code></td><td>data_clients.py uses its own hardcoded <code>FRED_SERIES</code> dict</td></tr>
+  </table>
+  <p>Harmless today, but it's a trap: editing config.json appears to work (no error) and silently does nothing.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> either thread each key through to its call site (orchestrator
+  already has <code>self.cfg</code> in scope at both hardcoded spots — trivial), or delete the keys you don't
+  intend to honor. For <code>FinnhubStream</code>, decide: wire it for real-time ticks, or remove the class and
+  key together.</div>
+</div>
+
+<div class="issue" id="m4">
+  <header><span class="badge b-med">Medium</span><h3>13. Makefile starts the live bot under <code>--reload</code>, and RUN_BOT is hidden coupling</h3></header>
+  <div class="loc">Makefile:74-82 · .env (RUN_BOT=1) · backend/app.py:84-97</div>
+  <p><code>make start-backend</code> runs <code>uvicorn app:app --port 8000 --reload</code>. Because
+  <code>RUN_BOT=1</code> lives in <code>.env</code>, this <i>is</i> the live bot — and any <code>.py</code> edit
+  restarts the process mid-session, wiping all in-memory state: daily/weekly override counters, drawdown guard
+  state, pending approvals, <code>_open_meta</code> hold timers. A halted day silently un-halts after an edit.
+  Nothing in <code>make start</code>'s output tells you whether you launched a dashboard or a trading bot.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> drop <code>--reload</code> from the start target (add a separate
+  <code>make dev</code> with reload and <code>RUN_BOT=0</code>), set RUN_BOT explicitly per target
+  (<code>RUN_BOT=1 $(UVICORN) …</code> for <code>start</code>), and print which mode launched. Longer term, persist
+  guard/override counters to the DB so restarts are harmless (also fixes #5's restart amnesia).</div>
+</div>
+
+<div class="issue" id="m5">
+  <header><span class="badge b-med">Medium</span><h3>14. Finnhub candle fallback retries the dead endpoint on every call</h3></header>
+  <div class="loc">backend/data_clients.py:101-111</div>
+  <p>Finnhub's free tier 403s <code>/stock/candle</code>, so every <code>candles()</code> call burns a token-bucket
+  slot and an HTTP round-trip on a guaranteed failure before falling back to Alpaca — and the Alpaca result is
+  <b>not cached</b> (the TTL cache only wraps the Finnhub attempt). Per scan: 13 symbols × every 5 minutes, plus
+  the 560-day SPY regime fetch — all uncached Alpaca calls and wasted Finnhub budget that the quote/news calls
+  actually need.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> cache at the function boundary instead of inside the Finnhub
+  branch: <code>cached(f"c:{symbol}:{resolution}", 300, fetch_finnhub_then_alpaca)</code>. Add negative-result
+  memory for the Finnhub endpoint (e.g. after the first 403, skip straight to Alpaca for 24h via a module flag or
+  cache key).</div>
+</div>
+
+<div class="issue" id="m6">
+  <header><span class="badge b-med">Medium</span><h3>15. Settings PUT can persist config that crashes the next bot boot</h3></header>
+  <div class="loc">backend/app.py:218-236 · backend/risk.py:152-161 · backend/orchestrator.py:50-51</div>
+  <p><code>put_settings</code> writes <code>custom_overrides</code> to config.json unvalidated. The validation
+  (<code>get_profile</code> raising on unknown keys) only runs at Orchestrator construction — i.e., the
+  <i>next restart</i>, which then crash-loops on startup with the bad config persisted. Same for non-numeric
+  values of known keys. Combined with #3 (unauthenticated PUT), this is remotely triggerable.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> validate before saving — call
+  <code>get_profile(cfg["risk"]["profile"], u.custom_overrides)</code> inside the endpoint and return a 400 on
+  ValueError. Also type-check <code>conviction_overrides</code> keys against the known schema (a small Pydantic
+  model does both for free).</div>
+</div>
+
+<div class="issue" id="m7">
+  <header><span class="badge b-med">Medium</span><h3>16. Weekly Sharpe annualizes 5-minute equity snapshots as daily returns</h3></header>
+  <div class="loc">backend/learning.py:101-103, 63-70 · backend/orchestrator.py:403-405</div>
+  <p><code>equity_curve</code> rows are written every ~5-minute scan, but
+  <code>generate_weekly_report()</code> treats consecutive snapshots as "daily_returns" and annualizes with
+  <code>√252</code>. The reported Sharpe is wrong by roughly <code>√78</code> (≈8.8×) in scale, and max-drawdown is
+  intraday rather than the daily figure the report implies.</p>
+  <div class="label">Fix</div>
+  <div class="fix"><span class="opt">Fix:</span> resample to one equity point per day before computing returns —
+  group <code>curve</code> by <code>ts[:10]</code> and take the last snapshot of each day. Three lines in
+  <code>generate_weekly_report()</code>.</div>
+</div>
+
+<h2>Low / documentation</h2>
+
+<div class="issue" id="l1">
+  <header><span class="badge b-low">Low</span><h3>17. README drift</h3></header>
+  <div class="loc">README.md</div>
+  <ul>
+    <li>Setup references <code>cp .env.example .env</code> — <b>no <code>.env.example</code> exists</b> (and it's the only documented list of required keys; recreate it with placeholder values, it's also your protection against accidentally documenting real keys).</li>
+    <li>Layout block still says <code>ai-trading-system/</code> after the Forge rename, and says "51 offline checks" — there are now 104 across three files.</li>
+    <li>"How it trades" step 6 states "deployment ≤70%, ≤8 positions, ≤3 per sector" — those are mixed profile numbers; the configured <code>aggressive</code> profile is 90% / 5 positions / 4 per sector. Phrase as profile-dependent.</li>
+    <li>The Makefile/tunnel workflow (the actual way this runs now) isn't documented at all — README still describes manual uvicorn + Vite.</li>
+  </ul>
+</div>
+
+<div class="issue" id="l2">
+  <header><span class="badge b-low">Low</span><h3>18. PaperBroker crashes with KeyError if alpaca-py is installed but keys are absent</h3></header>
+  <div class="loc">backend/alpaca_exec.py:34-42</div>
+  <p><code>os.environ["ALPACA_API_KEY"]</code> raises KeyError, so a fresh-clone <code>RUN_BOT=1</code> start dies
+  inside the Orchestrator constructor with an unhelpful traceback. Use <code>.get()</code> and fall back to
+  <code>dry_run=True</code> with a logged warning — consistent with the "never crash, degrade" philosophy used
+  everywhere else.</p>
+</div>
+
+<div class="issue" id="l3">
+  <header><span class="badge b-low">Low</span><h3>19. Dead code</h3></header>
+  <div class="loc">backend/data_clients.py:265-286 · backend/learning.py:44</div>
+  <ul>
+    <li><code>cboe_put_call_ratio()</code> — both inner fetchers unconditionally return None; the function can
+        only ever return None and nothing calls it. Implement it (see #8) or delete it.</li>
+    <li><code>learning.py:44</code> — <code>samples = 1 + sum(1 for _ in ())</code> is a no-op placeholder that's
+        never used; the docstring's "α shrinks as samples accumulate" actually shrinks with the number of signals
+        on the trade, not historical samples. Either pull the real sample count from
+        <code>signal_weights.samples</code> or fix the docstring.</li>
+  </ul>
+</div>
+
+<div class="issue" id="l4">
+  <header><span class="badge b-low">Low</span><h3>20. Strike increments and expiry calendar are approximations</h3></header>
+  <div class="loc">backend/options_math.py:128-133 · backend/strategies.py:95-106</div>
+  <p><code>strike_increment_for()</code> uses $5 above $200 — SPY/QQQ/most liquid names list $1 strikes well above
+  $200, so strikes are needlessly coarse (wider condor wings than intended). <code>next_expiry_in_range()</code>
+  assumes every Friday is an expiry — market holidays (e.g. Good Friday) move expiry to Thursday, so an order
+  could reference a non-existent contract. Cheap fix: query Alpaca's option-contracts endpoint for the actual
+  chain (strikes + expiries) once the options data client lands (same work as #2 Option A); until then, special-case
+  the known holiday Fridays.</p>
+</div>
+
+<div class="issue" id="l5">
+  <header><span class="badge b-low">Low</span><h3>21. Stale pending-override payloads accumulate in the API layer</h3></header>
+  <div class="loc">backend/app.py:73, 146-153</div>
+  <p>When an approval expires in the orchestrator, <code>_pending_payloads</code> in app.py is never cleaned, so
+  <code>GET /api/overrides</code> reports expired approvals as pending forever (until someone clicks skip).
+  Emit the existing <code>override_resolved</code> event from the expiry path too, and have the event handler
+  pop the payload — both halves already exist, they're just not connected.</p>
+</div>
+
+<h2>What's working well</h2>
+<div class="issue">
+  <header><span class="badge b-good">Solid</span><h3>Verified strengths — keep these patterns</h3></header>
+  <ul>
+    <li><b>All 104 tests pass</b> (51 core, 30 ML, 23 regime), and the core suite encodes the spec's own worked examples — including the deliberate $10k-cap contradiction resolution. Run output verified in this audit.</li>
+    <li><b>Risk math is correct and layered properly:</b> profile cap → universal cap → cash buffer ordering in <code>compute_position_size</code>; full-width collateral reservation for condors; fully-cash-secured CSPs; the T+1 settled-cash ledger with business-day rolling is exactly right.</li>
+    <li><b>ML containment is genuinely enforced</b>, not just claimed: every failure path in <code>ml_engine.score()</code> and <code>score_setup()</code> returns to rules; direction never comes from the model; the AUC deploy gate + atomic temp-file/rename deploy is correct; chronological (never random) split is honored.</li>
+    <li><b>Regime model philosophy holds:</b> the VIX&gt;35 crisis override genuinely outranks the GMM, and every failure path lands on <code>classify_regime()</code>.</li>
+    <li><b>Secrets hygiene:</b> <code>.env</code>, <code>cloudflared.yml</code>, <code>data/</code>, and <code>backend/models/</code> are gitignored and verifiably absent from git history.</li>
+    <li><b>Spec deviations are documented honestly</b> in the README (naked-leg removal, SPX→SPY, scrape stubs, IV proxy) — the right instinct; findings #2 and #8 are about extending that honesty to a few more places.</li>
+    <li><b>Clean seams:</b> db.py as the single Supabase swap point is real (verified: no other module touches sqlite3); data clients degrade gracefully; the Makefile's process-group management (setsid + PGID kill) is careful work.</li>
+  </ul>
+</div>
+
+<h2>Suggested order of attack</h2>
+<table>
+  <tr><th>#</th><th>Action</th><th>Why this order</th></tr>
+  <tr><td>1</td><td>Gate the tunnel (Cloudflare Access or bearer token) — finding <a href="#c3">3</a></td><td>One config change; everything else is moot if a stranger can rewrite your config.</td></tr>
+  <tr><td>2</td><td>Expiry sweep + interim BS marks — finding <a href="#c2">2</a></td><td>Unblocks every exit rule and the entire learning/ML bootstrap; without it the system can't generate its own training data.</td></tr>
+  <tr><td>3</td><td>Leg-aware closes — finding <a href="#c4">4</a></td><td>Must land with #2: exits that fire but close the wrong symbol are worse than no exits.</td></tr>
+  <tr><td>4</td><td>Override execution on approve/expire — finding <a href="#c1">1</a>, with <a href="#m2">11</a> and <a href="#l5">21</a></td><td>One subsystem, three connected fixes; add the orchestrator-seam tests here.</td></tr>
+  <tr><td>5</td><td>Guards correctness — findings <a href="#h1">5</a>, <a href="#h2">6</a>, <a href="#h3">7</a></td><td>Small, related, and all in the sizing/guard path; test together.</td></tr>
+  <tr><td>6</td><td>Signal wiring or honest disablement — finding <a href="#h4">8</a>, plus <a href="#m1">10</a></td><td>Decide what the engine actually is before the 3-month paper evaluation clock starts — results from a half-wired engine aren't interpretable.</td></tr>
+  <tr><td>7</td><td>Everything else (config wiring, Makefile, Sharpe, docs)</td><td>Quality-of-life; batch into one cleanup PR.</td></tr>
+</table>
+
+<p style="color:var(--mute); margin-top:40px; font-size:13px">
+Audit scope: all 15 backend modules, 3 test suites (executed), config.json, Makefile, cloudflared.yml,
+.env (key names only), git tracking state, requirements.txt, frontend API layer and override UI flow.
+Not exercised: live Alpaca/Finnhub/FRED calls, the React views' rendering, knowledge/ingest_papers.py network path.
+</p>
+
+</div>
+</body>
+</html>

@@ -84,6 +84,9 @@ _TRADES_ML_COLUMNS = [
     ("scoring_method", "TEXT DEFAULT 'rules'"),
     ("ml_score", "FLOAT"),
     ("feature_snapshot", "TEXT"),
+    # entry_iv: annualized vol used to price the legs at entry, so manage_positions
+    # can reprice a live mark (Black-Scholes) instead of holding at cost.
+    ("entry_iv", "REAL"),
 ]
 
 
@@ -121,8 +124,8 @@ def insert_trade(cand, contracts: int, cost: float, sized: float, profile: str,
            contracts, legs_json, entry_price, cost, collateral, max_profit, max_loss,
            signal_strength, iv_rank, market_regime, risk_profile, sized_dollars,
            rationale, override_tier, override_normal_size, dte, expiry, catalyst,
-           scoring_method, ml_score, feature_snapshot)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           scoring_method, ml_score, feature_snapshot, entry_iv)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (_now(), cand.symbol, cand.strategy, cand.strategy_type, cand.direction,
          contracts, json.dumps([l.__dict__ for l in cand.legs], default=str),
          cand.est_debit or -cand.est_credit, cost,
@@ -134,7 +137,8 @@ def insert_trade(cand, contracts: int, cost: float, sized: float, profile: str,
          cand.dte, str(cand.expiry), cand.catalyst,
          getattr(cand, "scoring_method", "rules"),
          getattr(cand, "ml_score", None),
-         getattr(cand, "feature_snapshot", None)))
+         getattr(cand, "feature_snapshot", None),
+         getattr(cand, "entry_iv", None)))
     trade_id = cur.lastrowid
     for s in cand.signals:
         c.execute("INSERT INTO trade_signals VALUES (?,?,?,?,?,?,NULL)",
@@ -178,6 +182,12 @@ def get_signal_weights() -> dict:
     return {r["name"]: r["weight"] for r in conn().execute("SELECT * FROM signal_weights")}
 
 
+def get_signal_samples() -> dict:
+    """Per-signal observation counts, used to anneal the learning rate."""
+    return {r["name"]: r["samples"]
+            for r in conn().execute("SELECT name, samples FROM signal_weights")}
+
+
 def update_signal_weight(name: str, weight: float, was_correct: bool):
     conn().execute(
         """INSERT INTO signal_weights (name, weight, samples, correct, updated)
@@ -217,6 +227,16 @@ def snapshot_equity(equity: float, cash: float, deployed: float):
 def equity_curve(limit: int = 2000) -> list[dict]:
     return [dict(r) for r in conn().execute(
         "SELECT * FROM equity_curve ORDER BY ts DESC LIMIT ?", (limit,))][::-1]
+
+
+def first_equity_on_or_after(date_iso: str) -> Optional[float]:
+    """Earliest recorded equity at/after a date (YYYY-MM-DD). Used to recover the
+    week's starting equity across restarts so the weekly-loss guard survives a
+    process bounce instead of resetting to today's equity each morning."""
+    r = conn().execute(
+        "SELECT equity FROM equity_curve WHERE ts >= ? ORDER BY ts ASC LIMIT 1",
+        (date_iso,)).fetchone()
+    return float(r["equity"]) if r and r["equity"] is not None else None
 
 
 def record_live_signal(symbol: str, s, suggested: Optional[str]):

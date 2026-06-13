@@ -57,6 +57,7 @@ class TradeCandidate:
     signal_strength: float = 0.0
     signals: list = field(default_factory=list)
     iv_rank: float = 50.0
+    entry_iv: float = 0.0           # annualized vol used to price the legs at entry
     catalyst: Optional[str] = None
     # conviction-criteria inputs
     technical_direction: str = NEUTRAL
@@ -183,7 +184,7 @@ def build_candidate(strategy: str, symbol: str, snap, profile: dict, composite: 
         symbol=symbol, strategy=strategy, strategy_type=PLAYBOOK[strategy]["type"],
         direction=composite["direction"], dte=dte, expiry=expiry,
         signal_strength=composite["strength"], signals=composite["signals"],
-        iv_rank=snap.iv_rank,
+        iv_rank=snap.iv_rank, entry_iv=iv,
         unusual_options_premium=snap.unusual_flow_premium,
         catalyst=(f"earnings in {snap.earnings_in_days}d"
                   if snap.earnings_in_days is not None and snap.earnings_in_days <= 21 else None),

@@ -14,6 +14,7 @@ if spreads are rejected).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 from typing import Optional
 
@@ -33,13 +34,20 @@ except ImportError:  # codebase stays importable for tests / dashboard-only mode
 
 class PaperBroker:
     def __init__(self, dry_run: bool = False):
-        self.dry_run = dry_run or not ALPACA_AVAILABLE
+        api_key = os.environ.get("ALPACA_API_KEY", "")
+        secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+        # Degrade to dry-run (never crash) when the SDK or keys are absent —
+        # consistent with the rest of the system's fail-safe philosophy.
+        self.dry_run = dry_run or not ALPACA_AVAILABLE or not (api_key and secret_key)
         if not self.dry_run:
-            self.client = TradingClient(
-                api_key=os.environ["ALPACA_API_KEY"],
-                secret_key=os.environ["ALPACA_SECRET_KEY"],
-                paper=True,
-            )
+            self.client = TradingClient(api_key=api_key, secret_key=secret_key, paper=True)
+        elif not dry_run and ALPACA_AVAILABLE and not (api_key and secret_key):
+            try:
+                import db
+                db.log_event("warn", "broker",
+                             "ALPACA_API_KEY/SECRET not set — running in dry-run mode")
+            except Exception:
+                pass
         self._dry_positions: list[dict] = []
         self._dry_cash: float = 0.0
 
@@ -122,13 +130,46 @@ class PaperBroker:
         ledger.spend(cost)  # reserve immediately; refined on fill reconciliation
         return {"id": str(o.id), "status": str(o.status), "cost": cost, **order_desc}
 
-    def close_position(self, symbol: str, ledger: SettledCashLedger,
-                       proceeds_estimate: float = 0.0) -> dict:
+    def close_trade_position(self, trade: dict, ledger: SettledCashLedger,
+                             proceeds_estimate: float = 0.0) -> dict:
+        """Close the actual option legs (or equity shares) of a trade — NOT the
+        underlying ticker. Equity → close_position(symbol). Single option leg →
+        close that OCC contract. Multi-leg → one inverse MLEG order. Proceeds
+        settle T+1 in the ledger only after the close is accepted."""
+        symbol = trade["symbol"]
+        contracts = max(trade.get("contracts") or 1, 1)
+        try:
+            legs = json.loads(trade.get("legs_json") or "[]")
+        except Exception:
+            legs = []
+
         if self.dry_run:
-            self._dry_positions = [p for p in self._dry_positions if p["symbol"] != symbol]
+            tid = trade.get("id")
+            self._dry_positions = [p for p in self._dry_positions
+                                   if p.get("trade_id") != tid and p.get("symbol") != symbol]
             ledger.receive_proceeds(proceeds_estimate)
             return {"symbol": symbol, "status": "closed_dry"}
-        res = self.client.close_position(symbol)
+
+        if trade.get("strategy_type") == "equity" or not legs:
+            res = self.client.close_position(symbol)
+        elif len(legs) == 1:
+            leg = legs[0]
+            # Inverse side to flatten the single option leg.
+            close_side = OrderSide.SELL if leg["side"] == "buy" else OrderSide.BUY
+            req = MarketOrderRequest(symbol=leg["symbol"], qty=contracts,
+                                     side=close_side, time_in_force=TimeInForce.DAY)
+            res = self.client.submit_order(order_data=req)
+        else:
+            close_legs = [
+                OptionLegRequest(
+                    symbol=l["symbol"], ratio_qty=l.get("ratio", 1) or 1,
+                    side=OrderSide.SELL if l["side"] == "buy" else OrderSide.BUY,
+                    position_intent=(PositionIntent.SELL_TO_CLOSE if l["side"] == "buy"
+                                     else PositionIntent.BUY_TO_CLOSE))
+                for l in legs]
+            req = MarketOrderRequest(qty=contracts, order_class=OrderClass.MLEG,
+                                     legs=close_legs, time_in_force=TimeInForce.DAY)
+            res = self.client.submit_order(order_data=req)
         ledger.receive_proceeds(proceeds_estimate)  # settles T+1
         return {"symbol": symbol, "status": "close_submitted", "order": str(res)}
 

@@ -12,8 +12,9 @@ dashboard. Total running cost: **$0/month** (free API tiers + SQLite + local/fre
 ## Layout
 
 ```
-ai-trading-system/
+forge/
 ├── config.json                # account / risk / overrides / watchlist / cadence
+├── Makefile                   # make start|stop|status|dev (backend/frontend/tunnel)
 ├── requirements.txt
 ├── .env.example
 ├── backend/
@@ -30,9 +31,13 @@ ai-trading-system/
 │   ├── rationale.py           # plain-English trade rationale (+optional LLM polish)
 │   ├── db.py                  # SQLite storage layer (Supabase swap point)
 │   └── knowledge/             # distilled frameworks + arXiv paper ingester
-├── tests/test_core.py         # 51 offline checks incl. every spec worked example
+├── tests/                     # 118 offline checks (core / ml / regime / orchestrator)
 └── frontend/                  # React + Vite + Tailwind dashboard (7 views)
 ```
+
+`tests/test_orchestrator.py` covers the live wiring (override approval→execution,
+expiry/stop exits with Black-Scholes marks, settled-cash equity) that the pure
+unit tests skip.
 
 ## Setup
 
@@ -84,10 +89,17 @@ pip install transformers torch               # real FinBERT sentiment (else keyw
    STRONG (1.5×, ≥5/7), MAX (2.0×, ≥6/7), ALL-IN (50% of cash, 7/7, **always** asks you
    via dashboard modal; 5-min timeout reverts to normal size). All capped at $10k.
 6. **Cash-account validation:** settled-cash ledger (T+1), full collateral reserved for
-   condors/CSPs, deployment ≤70%, ≤8 positions, ≤3 per sector, daily-loss halt,
-   Wednesday weekly-loss size-halving.
-7. **Management (every 60s):** profile stop-losses, 50%-of-credit profit target,
-   8% equity stop, **0DTE force-closed at 3:00pm ET**, 15-min minimum option hold.
+   condors/CSPs, plus deployment / concurrency / per-sector caps, a daily-loss halt, and
+   Wednesday weekly-loss size-halving — all **profile-dependent** (e.g. the default
+   `aggressive` profile is 90% deployed / 5 positions / 4 per sector; `conservative` is
+   50% / 8 / 2). The week-start equity is recovered from the persisted equity curve, so
+   the weekly guard survives a restart.
+7. **Management (every 60s):** positions are repriced with Black-Scholes off the entry IV
+   and the live underlying (interim until the Alpaca options feed is wired in), driving
+   profile stop-losses, the 50%-of-credit profit target, the 8% equity stop, an **expiry
+   sweep** (expired contracts settle at intrinsic so capital is freed), **0DTE force-close
+   at the configured deadline**, and a 15-min minimum option hold. Exits close the actual
+   option legs (single-leg or inverse MLEG), never the underlying ticker.
 8. **Learning:** every closed trade updates per-signal weights (clamped 0.25–2.0×) and logs
    a lesson; Friday 4:30pm ET writes the weekly report (win rate, Sharpe, max DD,
    best/worst strategy with root cause, weight recommendations, vs SPY).
@@ -143,7 +155,15 @@ to the original VIX/ADX rule. Swap `GaussianMixture` for `hmmlearn` in
    as original-wording heuristics; paper ingestion is arXiv-only (open access).
 7. **Scrape-based feeds (Barchart/Finviz/etc.)** are stub adapters with ToS notes; the
    running system uses only official APIs. Options flow is therefore demo data until
-   you wire a permitted source into `OptionsFlowAdapter`.
+   you wire a permitted source into `OptionsFlowAdapter`. Because institutional flow is
+   also conviction criterion #2, the **ALL-IN tier (7/7) is unreachable** without a flow
+   source — MAX (6/7) is the practical ceiling until one is connected.
+   **Dormant signals (inputs not freely available):** `extreme_put_call` and
+   `vix_backwardation` stay off — CBOE's free put/call and VIX9D/VIX3M endpoints now
+   return Access Denied. **Wired in this build:** `dxy_strength` (FRED DTWEXBGS),
+   `usdjpy_riskoff`/`eurusd_riskoff` (FRED DEXJPUS/DEXUSEU), and `canslim_breakout`'s
+   relative-strength rank (computed vs SPY from candles). `sector_rotation` and
+   `iv_crush_history` remain dormant pending per-symbol sector/earnings-vol history.
 8. **SQLite default**, single swap point in `db.py` for Supabase (below).
 9. **"AI rationale" is deterministic templates** built from the actual fired signals —
    $0 and never invents reasons. Optional Anthropic polish is off by default.
@@ -158,6 +178,19 @@ to the original VIX/ADX rule. Swap `GaussianMixture` for `hmmlearn` in
 `live_signals`, `events`). Free tier is plenty at this volume. SQLite is genuinely
 fine for a single-bot deployment, so this is only worth it if you want the dashboard
 hosted separately from the bot.
+
+## Running it
+
+`make start` launches backend + frontend + Cloudflare tunnel (or `make start backend`
+for one). The backend honors `RUN_BOT` from `.env` — `make start` runs the **live loop**
+(no `--reload`, so a code edit can't wipe in-memory guard/override state); use `make dev`
+for a reloading, **non-trading** dashboard while you edit. `make status` shows what's up.
+
+**Securing the tunnel:** the API has an optional bearer gate. Set `API_TOKEN` in `.env`
+(and `VITE_API_TOKEN` in `frontend/.env`) and every route + the WebSocket require it —
+do this whenever the backend is reachable over the public tunnel, or the settings/override
+endpoints are world-writable. Putting Cloudflare Access in front of the hostname is an
+even stronger, zero-code option.
 
 ## Deployment
 
