@@ -1,4 +1,4 @@
-.PHONY: install start stop restart status backend frontend tunnel \
+.PHONY: install start stop restart status backend frontend tunnel dev \
         start-backend start-frontend start-tunnel \
         stop-backend stop-frontend stop-tunnel \
         restart-backend restart-frontend restart-tunnel
@@ -71,14 +71,32 @@ start:
 
 # setsid puts each service in its own process group so kill -PGID tears down
 # all descendants (uvicorn workers, npm→sh→node/vite, cloudflared children).
+#
+# NOTE: no --reload here. With RUN_BOT=1 this IS the live trading loop, and a
+# code-save reload would silently wipe in-memory state (drawdown halt, override
+# counters, position hold timers, pending approvals). Use `make dev` for a
+# reloading, non-trading dashboard while editing.
 start-backend:
 	@if $(call _port_up,8000); then \
 		echo "backend already running (port 8000)"; \
 	else \
-		setsid sh -c 'cd backend && exec $(UVICORN) app:app --port 8000 --reload' \
+		mode=$$(grep -qs '^RUN_BOT=1' .env && echo 'LIVE BOT' || echo 'dashboard only'); \
+		setsid sh -c 'cd backend && exec $(UVICORN) app:app --port 8000' \
 			>>$(BACKEND_LOG) 2>&1 & \
 		echo $$! > $(BACKEND_PID); \
-		echo "backend  → http://localhost:8000   log: $(BACKEND_LOG)"; \
+		echo "backend  → http://localhost:8000   [$$mode]   log: $(BACKEND_LOG)"; \
+	fi
+
+# Reloading dev server with the trading loop OFF (RUN_BOT=0 wins over .env because
+# python-dotenv doesn't override an already-set env var). Safe to edit against.
+dev:
+	@if $(call _port_up,8000); then \
+		echo "backend already running (port 8000)"; \
+	else \
+		setsid sh -c 'cd backend && exec env RUN_BOT=0 $(UVICORN) app:app --port 8000 --reload' \
+			>>$(BACKEND_LOG) 2>&1 & \
+		echo $$! > $(BACKEND_PID); \
+		echo "backend  → http://localhost:8000   [dev: reload, no bot]   log: $(BACKEND_LOG)"; \
 	fi
 
 start-frontend:
@@ -98,7 +116,7 @@ start-tunnel:
 	if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
 		echo "tunnel already running (pid $$pid)"; \
 	else \
-		setsid sh -c 'exec cloudflared --config cloudflared.yml tunnel run $(TUNNEL_NAME)' \
+		setsid sh -c 'exec cloudflared --config cloudflared.yml tunnel --protocol http2 run $(TUNNEL_NAME)' \
 			>>$(TUNNEL_LOG) 2>&1 & \
 		echo $$! > $(TUNNEL_PID); \
 		echo "tunnel   → cloudflared tunnel run $(TUNNEL_NAME)   log: $(TUNNEL_LOG)"; \

@@ -249,8 +249,18 @@ class SettledCashLedger:
     unsettled: list = field(default_factory=list)  # [(settle_date, amount)]
 
     def available(self, today: Optional[dt.date] = None) -> float:
+        """Settled cash only — the figure the bot is allowed to spend."""
         self._roll(today or dt.date.today())
         return self.settled
+
+    def total(self, today: Optional[dt.date] = None) -> float:
+        """Settled cash + proceeds still pending T+1 settlement. Use this for
+        equity / drawdown / snapshots so a profitable close doesn't read as an
+        instant equity drop (and falsely trip the daily-drawdown halt) while the
+        proceeds sit unsettled. Never use it for spend validation — that's
+        available()."""
+        self._roll(today or dt.date.today())
+        return self.settled + sum(amount for _, amount in self.unsettled)
 
     def spend(self, amount: float, today: Optional[dt.date] = None) -> None:
         self._roll(today or dt.date.today())

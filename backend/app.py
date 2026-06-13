@@ -20,7 +20,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (Depends, FastAPI, Header, HTTPException, WebSocket,
+                     WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -29,12 +30,27 @@ import learning
 from data_clients import fear_greed_index
 from orchestrator import Orchestrator
 from overrides import OVERRIDE_TIERS
-from risk import PROFILES, UNIVERSAL_HARD_CAPS
+from risk import PROFILES, UNIVERSAL_HARD_CAPS, get_profile
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
 
-app = FastAPI(title="AI Trading System", version="1.0")
+# Optional shared-secret auth. When API_TOKEN is unset the gate is a no-op (local
+# dev). When set — e.g. behind the public Cloudflare tunnel — every API route and
+# the WebSocket require it, so a stranger who finds the hostname can't read trades
+# or rewrite config. For a stronger edge gate, put Cloudflare Access in front too.
+API_TOKEN = os.environ.get("API_TOKEN", "").strip()
+
+
+def require_auth(authorization: str | None = Header(default=None)):
+    if not API_TOKEN:
+        return
+    if authorization != f"Bearer {API_TOKEN}":
+        raise HTTPException(401, "Missing or invalid API token")
+
+
+app = FastAPI(title="Forge Trading System", version="1.1",
+              dependencies=[Depends(require_auth)])
 _extra_origins = [o.strip() for o in os.environ.get("FRONTEND_ORIGIN", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -91,6 +107,11 @@ async def startup():
         def on_event(kind, payload):
             if kind == "override_pending":
                 _pending_payloads[payload["approval_id"]] = payload
+            elif kind == "override_resolved":
+                # Drop the cached modal payload whether the override was approved,
+                # skipped, or expired — so GET /api/overrides stops reporting a
+                # resolved approval as still pending.
+                _pending_payloads.pop(payload.get("approval_id"), None)
             hub.push(kind, payload)
 
         _bot = Orchestrator(cfg, on_event=on_event)
@@ -218,11 +239,24 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(u: SettingsUpdate):
     cfg = load_config()
+    new_profile = u.profile or cfg["risk"]["profile"]
+    if u.profile and u.profile not in PROFILES:
+        raise HTTPException(400, f"Unknown profile {u.profile}")
+    # Validate the profile + custom_overrides combination BEFORE persisting, so a
+    # bad payload returns 400 here instead of crash-looping the bot on next boot
+    # (get_profile raises on unknown keys). Also blocks the unauthenticated-PUT +
+    # bad-config attack path.
+    new_custom = (u.custom_overrides if u.custom_overrides is not None
+                  else cfg["risk"].get("custom_overrides"))
+    try:
+        get_profile(new_profile, new_custom)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     if u.profile:
-        if u.profile not in PROFILES:
-            raise HTTPException(400, f"Unknown profile {u.profile}")
         cfg["risk"]["profile"] = u.profile
     if u.starting_cash:
+        if u.starting_cash <= 0:
+            raise HTTPException(400, "starting_cash must be positive")
         cfg["account"]["starting_cash"] = u.starting_cash
     if u.custom_overrides is not None:
         cfg["risk"]["custom_overrides"] = u.custom_overrides
@@ -242,19 +276,25 @@ def put_settings(u: SettingsUpdate):
 def approve_override(approval_id: str):
     if not _bot:
         raise HTTPException(409, "Bot not running")
-    ov = _bot.resolve_pending_override(approval_id, True)
-    payload = _pending_payloads.pop(approval_id, None)
-    if not ov or not payload:
+    # Actually submits the trade at override size (or 400s if it can no longer be
+    # sized/validated). execute_pending emits override_resolved, which clears the
+    # cached payload via the on_event handler.
+    result = _bot.execute_pending(approval_id, approved=True)
+    if result is None:
         raise HTTPException(404, "Approval not found or expired")
-    db.log_event("info", "override_approved", f"{ov.tier} {payload['symbol']} approved by user")
-    hub.push("override_resolved", {"approval_id": approval_id, "approved": True})
-    return {"ok": True}
+    db.log_event("info", "override_approved",
+                 f"{result['tier']} {result['symbol']} approved by user "
+                 f"(executed={result.get('executed')})")
+    return {"ok": True, **result}
 
 
 @app.post("/api/overrides/{approval_id}/skip")
 def skip_override(approval_id: str):
+    # Skip → submit at NORMAL size (the documented fallback), not nothing.
     if _bot:
-        _bot.resolve_pending_override(approval_id, False)
+        result = _bot.execute_pending(approval_id, approved=False)
+        if result is not None:
+            return {"ok": True, **result}
     _pending_payloads.pop(approval_id, None)
     hub.push("override_resolved", {"approval_id": approval_id, "approved": False})
     return {"ok": True}
@@ -268,6 +308,11 @@ def run_weekly_report():
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    # Browsers can't set Authorization on a WebSocket, so the token rides as a
+    # query param (?token=…). No-op when API_TOKEN is unset.
+    if API_TOKEN and ws.query_params.get("token") != API_TOKEN:
+        await ws.close(code=1008)
+        return
     await hub.connect(ws)
     try:
         while True:

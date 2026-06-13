@@ -27,7 +27,8 @@ import learning
 from alpaca_exec import PaperBroker
 from data_clients import (FinnhubClient, FREDClient, OptionsFlowAdapter,
                           SentimentScorer, fear_greed_index)
-from options_math import implied_vol, iv_rank as compute_iv_rank
+from options_math import (bs_price, implied_vol, iv_rank as compute_iv_rank,
+                          strike_increment_for)
 from overrides import OverrideManager
 from rationale import (llm_polish, normal_rationale, overnight_summary_sentence,
                        override_rationale)
@@ -63,7 +64,12 @@ class Orchestrator:
         self.ctx = MarketContext()
         self.on_event = on_event or (lambda kind, payload: None)
         self._open_meta: dict = {}  # trade_id → {opened_at, candidate}
+        self._pending_ovr: dict = {}  # approval_id → execution context (cand, etc.)
+        self._spy_ret63: float | None = None  # cached SPY 3m return for rel-strength
         self._last_scan = self._last_manage = 0.0
+        # Serializes the execute/manage paths (bot loop thread) against the
+        # approval path (API thread) so ledger + DB writes don't interleave.
+        self._lock = threading.RLock()
         if self.profile.get("startup_warning"):
             db.log_event("warn", "profile", self.profile["startup_warning"])
 
@@ -94,10 +100,29 @@ class Orchestrator:
         self.ctx.yield_curve_2s10s = (m.get("yield_curve_2s10s")
                                       if m.get("yield_curve_2s10s") is not None
                                       else self.ctx.yield_curve_2s10s)
+        # DXY trend feeds the dxy_strength macro rule (previously stuck neutral).
+        dxy_chg = self._fred_pct_change("DTWEXBGS")
+        if dxy_chg is not None:
+            self.ctx.dxy_trend = ("bullish" if dxy_chg > 0.1
+                                  else "bearish" if dxy_chg < -0.1 else "neutral")
         fg = fear_greed_index()
         if fg is not None:
             self.ctx.fear_greed_index = fg
         self.refresh_regime()
+
+    def _fred_pct_change(self, series_id: str) -> float | None:
+        """Percent change of the two most recent observations of a FRED series
+        (e.g. DTWEXBGS dollar index, DEXJPUS, DEXUSEU). Free, daily, reliable —
+        used to revive the FX/DXY signals the rule engine already implements."""
+        try:
+            obs = self.fred.latest(series_id, 2)
+            if len(obs) >= 2:
+                cur, prev = float(obs[0]["value"]), float(obs[1]["value"])
+                if prev:
+                    return (cur - prev) / prev * 100.0
+        except Exception:
+            pass
+        return None
 
     def refresh_regime(self):
         """Daily: refit (weekly cadence) and classify the market regime from SPY
@@ -122,7 +147,7 @@ class Orchestrator:
             db.log_event("warn", "regime", "refresh failed; rules fallback in scan loop")
 
     def refresh_foreign(self):
-        moves, fx = {}, {}
+        moves = {}
         for sym in self.cfg["trading"]["foreign_proxies"]:
             try:
                 q = self.finnhub.quote(sym)
@@ -130,8 +155,20 @@ class Orchestrator:
                     moves[sym] = q["dp"]
             except Exception:
                 continue
+        # FX from FRED (DEXJPUS = JPY per USD, DEXUSEU = USD per EUR). DEXJPUS up
+        # means USD/JPY up; DEXUSEU up means EUR/USD up. These revive the
+        # usdjpy_riskoff / eurusd_riskoff overnight overlays.
+        fx = {}
+        jpy = self._fred_pct_change("DEXJPUS")
+        eur = self._fred_pct_change("DEXUSEU")
+        if jpy is not None:
+            fx["USDJPY"] = jpy
+        if eur is not None:
+            fx["EURUSD"] = eur
         sigs, bias, _ = foreign_overnight_signals(moves, fx)
         self.ctx.overnight_bias = bias
+        self.ctx.usdjpy_trend = ("bullish" if (jpy or 0) > 0 else "bearish"
+                                 if (jpy or 0) < 0 else "neutral")
         self.ctx.overnight_summary = overnight_summary_sentence(bias, moves, sigs)
         self.on_event("foreign", {"moves": moves, "bias": bias,
                                   "summary": self.ctx.overnight_summary})
@@ -176,8 +213,22 @@ class Orchestrator:
             earnings_in_days=self._safe_earnings(symbol),
             unusual_flow_premium=flow_prem, unusual_flow_direction=flow_dir,
             news_sentiment=sent, open_gap_pct=gap,
+            rs_rank=self._rel_strength_rank(df),
             intraday_above_vwap=(price > float(ind.sma20) if pd.notna(ind.sma20) else None),
         )
+
+    def _rel_strength_rank(self, df: pd.DataFrame, lookback: int = 63) -> float:
+        """Relative strength vs SPY as a 0-100 rank (revives canslim_breakout,
+        which needs > 85). Maps the symbol's 3-month return minus SPY's onto a
+        bounded scale; SPY benchmark is cached per scan."""
+        if self._spy_ret63 is None or len(df) <= lookback:
+            return 50.0
+        try:
+            sym_ret = float(df.close.iloc[-1] / df.close.iloc[-(lookback + 1)] - 1.0)
+        except Exception:
+            return 50.0
+        excess = sym_ret - self._spy_ret63
+        return round(max(0.0, min(100.0, 50.0 + excess * 500.0)), 1)
 
     def _safe_earnings(self, symbol: str):
         try:
@@ -185,17 +236,29 @@ class Orchestrator:
         except Exception:
             return None
 
+    def _refresh_spy_benchmark(self, lookback: int = 63):
+        """Cache SPY's trailing return once per scan as the relative-strength
+        benchmark (candles are TTL-cached, so this is ~free)."""
+        try:
+            candles = self.finnhub.candles("SPY")
+            closes = (candles or {}).get("c") or []
+            if len(closes) > lookback:
+                self._spy_ret63 = float(closes[-1] / closes[-(lookback + 1)] - 1.0)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------ scan + execute
 
     def scan_once(self):
         now = self.now_et()
         if self.ctx.regime_source not in ("model", "override"):
             self.ctx.regime = classify_regime(self.ctx.vix, 25.0)
+        self._refresh_spy_benchmark()
         macro_sigs = macro_signals(self.ctx)
         weights = db.get_signal_weights()
         open_positions = db.open_trades()
         deployed = sum(t["cost"] or 0 for t in open_positions)
-        equity = self.ledger.available() + deployed
+        equity = self.ledger.total() + deployed
 
         try:
             self.guards.check_drawdown(equity, now.replace(tzinfo=None))
@@ -218,7 +281,12 @@ class Orchestrator:
                                    signal_weights=weights)
                 for s in fired:
                     db.record_live_signal(symbol, s, None)
-                if comp["strength"] < 0.30 or not fired:
+                # Confluence gate: the composite floor is 0.30, so a lone rule
+                # always clears a bare 0.30 threshold. Require at least two fired
+                # signals spanning at least two categories before committing
+                # capital — single-signal setups are logged but not traded.
+                categories = {s.category for s in fired}
+                if comp["strength"] < 0.40 or len(fired) < 2 or len(categories) < 2:
                     continue
 
                 cand = select_strategy(symbol, comp, snap, self.profile, self.ctx, now)
@@ -245,30 +313,43 @@ class Orchestrator:
                 db.log_event("error", "scan", f"{symbol}: {traceback.format_exc(limit=2)}")
 
     def execute_candidate(self, cand, open_positions, deployed, equity):
-        cash = self.ledger.available()
-        normal = compute_position_size(cash, self.profile, cand.signal_strength,
-                                       cand.strategy_type) * self.guards.size_multiplier()
+        with self._lock:
+            cash = self.ledger.available()
+            mult = self.guards.size_multiplier()
+            # `normal` is the UNHALVED profile size — it's what overrides.evaluate
+            # expects as the baseline and what the tier math multiplies. The guard
+            # multiplier is applied exactly once, at the end (see #7 in the audit).
+            normal = compute_position_size(cash, self.profile, cand.signal_strength,
+                                           cand.strategy_type)
 
-        ov = self.overrides.evaluate(cand, self.ctx, normal)
-        for rec in self.overrides.rejected_log[-3:]:
-            db.log_rejected_override(rec)
-        if ov and ov.requires_approval and ov.approved is None:
-            # ALL_IN (or manually-gated tier): surface modal, wait via API. The
-            # pending queue is polled by app.py; if it expires we trade normal size.
-            self.on_event("override_pending", {
-                "approval_id": ov.approval_id, "tier": ov.tier,
-                "symbol": cand.symbol, "strategy": cand.strategy,
-                "normal_size": normal, "criteria": ov.criteria,
-                "expires_at": ov.expires_at.isoformat()})
-            db.log_event("warn", "override_pending",
-                         f"{ov.tier} on {cand.symbol} awaiting approval {ov.approval_id}")
-            return  # executed on approval (app.py) or as normal size on expiry
+            ov = self.overrides.evaluate(cand, self.ctx, normal)
+            self._drain_rejected_log()
+            if ov and ov.requires_approval and ov.approved is None:
+                # Approval-gated tier (ALL_IN, or a manually-gated STRONG/MAX):
+                # surface the modal and stash the full execution context so the
+                # API approval path — or the expiry sweep — can actually submit
+                # the trade. (Previously the candidate was discarded here.)
+                self._pending_ovr[ov.approval_id] = {
+                    "ov": ov, "cand": cand, "normal": normal}
+                self.on_event("override_pending", {
+                    "approval_id": ov.approval_id, "tier": ov.tier,
+                    "symbol": cand.symbol, "strategy": cand.strategy,
+                    "normal_size": normal, "criteria": ov.criteria,
+                    "expires_at": ov.expires_at.isoformat()})
+                db.log_event("warn", "override_pending",
+                             f"{ov.tier} on {cand.symbol} awaiting approval {ov.approval_id}")
+                return  # submitted on approve()/expiry via execute_pending()
 
-        sized = compute_position_size(cash, self.profile, cand.signal_strength,
-                                      cand.strategy_type, conviction_override=ov)
-        sized *= self.guards.size_multiplier()
-        self._finalize_and_submit(cand, sized, normal, ov, open_positions,
-                                  deployed, equity, auto=True)
+            sized = compute_position_size(cash, self.profile, cand.signal_strength,
+                                          cand.strategy_type, conviction_override=ov) * mult
+            self._finalize_and_submit(cand, sized, normal, ov, open_positions,
+                                      deployed, equity, auto=True)
+
+    def _drain_rejected_log(self):
+        """Flush in-memory override rejections to the DB exactly once each (was
+        re-inserting the last three on every evaluation → duplicate rows)."""
+        while self.overrides.rejected_log:
+            db.log_rejected_override(self.overrides.rejected_log.pop(0))
 
     def _finalize_and_submit(self, cand, sized, normal, ov, open_positions,
                              deployed, equity, auto: bool):
@@ -299,66 +380,187 @@ class Orchestrator:
         db.log_event("info", "trade", f"Opened #{trade_id} {cand.symbol} {cand.strategy} "
                                       f"${order['cost']:,.0f}")
 
-    def resolve_pending_override(self, approval_id: str, approved: bool):
-        """Called by app.py from the dashboard modal."""
-        ov = self.overrides.resolve(approval_id, approved)
-        if not ov:
-            return None
-        # Re-fetch sizing context fresh; pending candidates are stored on the event
-        # consumer side (app keeps the payload). Approval expiry → normal size.
-        return ov
+    def execute_pending(self, approval_id: str, approved: bool):
+        """Resolve a queued approval and actually submit the trade. Called by
+        app.py (user approve/skip) and by the expiry sweep (approved=False →
+        normal size). Returns a small result dict, or None if unknown/expired.
+
+        Re-validates sizing against fresh cash/positions at execution time, so a
+        few minutes in the modal can't oversize the trade. Always emits
+        override_resolved so the dashboard modal and the API payload cache clear.
+        """
+        with self._lock:
+            ctx = self._pending_ovr.pop(approval_id, None)
+            if ctx is None:
+                return None
+            ov, cand, normal = ctx["ov"], ctx["cand"], ctx["normal"]
+            ov.approved = bool(approved)
+            self.overrides.pending.pop(approval_id, None)
+
+            cash = self.ledger.available()
+            mult = self.guards.size_multiplier()
+            open_positions = db.open_trades()
+            deployed = sum(t["cost"] or 0 for t in open_positions)
+            equity = self.ledger.total() + deployed
+
+            use_override = approved and ov.is_valid()
+            sized = compute_position_size(
+                cash, self.profile, cand.signal_strength, cand.strategy_type,
+                conviction_override=ov if use_override else None) * mult
+
+            result = {"approval_id": approval_id, "approved": use_override,
+                      "tier": ov.tier, "symbol": cand.symbol}
+            try:
+                self._finalize_and_submit(
+                    cand, sized, normal, ov if use_override else None,
+                    open_positions, deployed, equity, auto=not use_override)
+                result["executed"] = True
+            except RiskRejection as e:
+                db.log_event("info", "risk_reject", f"{cand.symbol} (override resolve): {e}")
+                result["executed"] = False
+                result["reason"] = str(e)
+            except Exception:
+                db.log_event("error", "override_resolve",
+                             traceback.format_exc(limit=2))
+                result["executed"] = False
+            self.on_event("override_resolved",
+                          {"approval_id": approval_id, "approved": use_override})
+            return result
 
     # ------------------------------------------------------------------ position management
 
     def manage_positions(self):
         now = self.now_et()
-        force_close_0dte = now.time() >= dt.time(15, 0)
+        today = now.date()
+        fc = self.cfg["trading"].get("zero_dte_force_close_et", "15:00")
+        try:
+            fh, fm = (int(x) for x in fc.split(":"))
+        except Exception:
+            fh, fm = 15, 0
+        force_close_0dte = now.time() >= dt.time(fh, fm)
+        profit_target = self.cfg["trading"].get("credit_trade_profit_target_pct", 0.5)
+        stop = self.profile["single_position_stop_pct"]
+
         for t in db.open_trades():
             meta = self._open_meta.get(t["id"])
             opened = (meta["opened_at"] if meta
                       else dt.datetime.fromisoformat(t["ts_open"]).astimezone(ET))
             held_min = (now - opened).total_seconds() / 60
-            if t["strategy_type"] != "equity" and held_min < \
-                    self.cfg["trading"]["min_hold_minutes_options"]:
+            min_hold = self.cfg["trading"]["min_hold_minutes_options"]
+            try:
+                expiry = dt.date.fromisoformat((t["expiry"] or "")[:10])
+            except Exception:
+                expiry = None
+            expired = expiry is not None and expiry <= today
+            # The minimum-hold rule never blocks an expiry/force-close exit.
+            if (t["strategy_type"] != "equity" and held_min < min_hold
+                    and not expired and not (t["strategy_type"] == "0dte" and force_close_0dte)):
                 continue
             try:
                 q = self.finnhub.quote(t["symbol"])
-                mark = self._estimate_mark(t, q.get("c") or 0)
+                underlying = q.get("c") or 0
             except Exception:
                 continue
 
+            mv = self._position_mark(t, underlying, today)
+            if mv is None:
+                # Couldn't reprice (no price/legs). Still force a settle if the
+                # contract has expired so dead positions don't pin capital forever.
+                if not expired:
+                    continue
+                mv = {"pnl": 0.0, "is_credit": (t["entry_price"] or 0) < 0,
+                      "close_cost": 0.0, "credit_received": 0.0,
+                      "mark_per_contract": 0.0}
+            pnl, is_credit = mv["pnl"], mv["is_credit"]
             entry_cost = t["cost"] or 1
-            pnl = mark - entry_cost
-            stop = self.profile["single_position_stop_pct"]
-            is_credit = (t["entry_price"] or 0) < 0
+
             reason = None
-            if t["strategy_type"] == "0dte" and force_close_0dte:
-                reason = "0DTE force-close at 3:00pm ET"
-            elif not is_credit and pnl <= -stop * entry_cost:
-                reason = f"Stop: down {abs(pnl)/entry_cost:.0%} of debit (limit {stop:.0%})"
-            elif is_credit and mark >= entry_cost + 0.5 * (t["max_profit"] or 0):
-                reason = "Profit target: 50% of max credit captured"
-            elif t["strategy_type"] == "equity" and pnl <= -0.08 * entry_cost:
-                reason = "Equity stop: 8% below entry (O'Neil rule)"
-            if reason:
-                self.broker.close_position(t["symbol"], self.ledger,
-                                           proceeds_estimate=max(mark, 0))
-                db.close_trade(t["id"], mark / max(t["contracts"] or 1, 1), pnl)
+            if expired:
+                reason = "Expired — settled at intrinsic"
+            elif t["strategy_type"] == "0dte" and force_close_0dte:
+                reason = "0DTE force-close at deadline"
+            elif is_credit:
+                if pnl >= profit_target * (mv["credit_received"] or 0) and mv["credit_received"]:
+                    reason = f"Profit target: {profit_target:.0%} of credit captured"
+                elif pnl <= -stop * (t["max_loss"] or entry_cost):
+                    reason = f"Stop: credit loss {abs(pnl)/max(t['max_loss'] or entry_cost,1):.0%} of max"
+            else:
+                if pnl <= -stop * entry_cost:
+                    reason = f"Stop: down {abs(pnl)/entry_cost:.0%} of debit (limit {stop:.0%})"
+                elif t["strategy_type"] == "equity" and pnl <= -0.08 * entry_cost:
+                    reason = "Equity stop: 8% below entry (O'Neil rule)"
+            if not reason:
+                continue
+
+            with self._lock:
+                proceeds = max((t["cost"] or 0) + pnl, 0.0)
+                try:
+                    self.broker.close_trade_position(t, self.ledger,
+                                                     proceeds_estimate=proceeds)
+                except Exception:
+                    db.log_event("error", "close",
+                                 f"#{t['id']} broker close failed: {traceback.format_exc(limit=2)}")
+                    continue
+                db.close_trade(t["id"], mv["mark_per_contract"], pnl)
                 lesson = learning.post_trade_analysis({**t, "pnl": pnl})
-                self.on_event("trade_closed", {"trade_id": t["id"], "pnl": pnl,
-                                               "reason": reason, "lesson": lesson})
-                db.log_event("info", "close", f"Closed #{t['id']} {t['symbol']}: {reason}")
+            self.on_event("trade_closed", {"trade_id": t["id"], "pnl": pnl,
+                                           "reason": reason, "lesson": lesson})
+            db.log_event("info", "close",
+                         f"Closed #{t['id']} {t['symbol']}: {reason} (P&L ${pnl:,.0f})")
 
     @staticmethod
-    def _estimate_mark(trade: dict, underlying_price: float) -> float:
-        """Conservative mark using underlying drift vs entry. Replace with real
-        option marks once the Alpaca options data client is wired in."""
-        cost = trade["cost"] or 0
-        ref = trade.get("sized_dollars") or cost
-        if not underlying_price or not ref:
-            return cost
-        drift = 0.0  # without entry underlying stored, hold mark at cost
-        return cost * (1 + drift)
+    def _position_mark(trade: dict, underlying_price: float,
+                       today: dt.date) -> dict | None:
+        """Reprice the stored legs with Black-Scholes to get a live mark and P&L.
+        Interim solution (no options-data API): uses the entry IV proxy and the
+        current underlying, which is enough to make stops, profit targets, and the
+        learning loop function instead of holding every position at cost forever.
+
+        Returns {pnl, is_credit, close_cost, credit_received, mark_per_contract}
+        in dollars, or None if it can't be priced (missing quote/legs)."""
+        if not underlying_price:
+            return None
+        try:
+            legs = json.loads(trade.get("legs_json") or "[]")
+        except Exception:
+            legs = []
+        if not legs:
+            return None
+        iv = trade.get("entry_iv") or 0.0
+        if not iv or iv <= 0:
+            iv = 0.25  # legacy trades without a stored entry IV → rough default
+        contracts = max(trade.get("contracts") or 1, 1)
+        r = 0.043
+
+        # Cost (price points/contract) to CLOSE: buy-legs are sold (we receive),
+        # sell-legs are bought back (we pay).
+        close_cost = 0.0
+        for leg in legs:
+            try:
+                exp = dt.date.fromisoformat(str(leg["expiry"])[:10])
+                tau = max((exp - today).days, 0) / 365.0
+                p = bs_price(float(underlying_price), float(leg["strike"]), tau, r,
+                             iv, leg["kind"])
+            except Exception:
+                return None
+            ratio = leg.get("ratio", 1) or 1
+            close_cost += (-p if leg["side"] == "buy" else p) * ratio
+        close_cost_dollars = close_cost * 100 * contracts
+        is_credit = (trade.get("entry_price") or 0) < 0
+
+        if is_credit:
+            credit_received = -(trade.get("entry_price") or 0) * 100 * contracts
+            pnl = credit_received - close_cost_dollars
+            mark_per_contract = close_cost  # net debit to close, per contract
+        else:
+            credit_received = 0.0
+            current_value = -close_cost_dollars  # received on close
+            pnl = current_value - (trade.get("cost") or 0)
+            mark_per_contract = -close_cost  # net value, per contract
+        return {"pnl": round(pnl, 2), "is_credit": is_credit,
+                "close_cost": round(close_cost_dollars, 2),
+                "credit_received": round(credit_received, 2),
+                "mark_per_contract": round(mark_per_contract, 4)}
 
     # ------------------------------------------------------------------ main loop
 
@@ -376,9 +578,14 @@ class Orchestrator:
                     self.overrides.reset_day()
                     if now.weekday() == 0:
                         self.overrides.reset_week()
-                    eq = self.ledger.available() + sum(
+                    eq = self.ledger.total() + sum(
                         t["cost"] or 0 for t in db.open_trades())
-                    self.guards.start_day(eq)
+                    # Recover THIS week's Monday-open equity (persisted in the
+                    # equity curve) so the weekly-loss guard compares against the
+                    # real week start — not today's equity — and survives restarts.
+                    monday = (now.date() - dt.timedelta(days=now.weekday())).isoformat()
+                    week_eq = db.first_equity_on_or_after(monday) or eq
+                    self.guards.start_day(eq, week_start_equity=week_eq)
                     self.broker.sync_ledger(self.ledger)
                     self.refresh_macro()
                     try:                      # weekly ML retrain check (spec §2.2.4)
@@ -391,6 +598,8 @@ class Orchestrator:
                 for ov in self.overrides.expire_stale():
                     db.log_event("warn", "override_expired",
                                  f"{ov.tier} approval expired → reverting to normal sizing")
+                    if ov.approval_id in self._pending_ovr:
+                        self.execute_pending(ov.approval_id, approved=False)
 
                 t = time.monotonic()
                 if phase == "pre" and t - self._last_scan > 600:
@@ -401,7 +610,7 @@ class Orchestrator:
                         self.scan_once()
                         self._last_scan = t
                         deployed = sum(x["cost"] or 0 for x in db.open_trades())
-                        db.snapshot_equity(self.ledger.available() + deployed,
+                        db.snapshot_equity(self.ledger.total() + deployed,
                                            self.ledger.available(), deployed)
                     if t - self._last_manage > \
                             self.cfg["trading"]["position_check_interval_seconds"]:

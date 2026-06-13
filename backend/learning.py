@@ -30,6 +30,7 @@ def post_trade_analysis(trade: dict) -> dict:
     sig_rows = db.trade_signal_rows(trade["id"])
     worked, failed = [], []
     weights = db.get_signal_weights()
+    samples = db.get_signal_samples()
     for s in sig_rows:
         # A directional signal "was correct" if its direction matched a winning
         # trade (or opposed a losing one). Neutral signals score on the trade result.
@@ -41,8 +42,10 @@ def post_trade_analysis(trade: dict) -> dict:
         (worked if correct else failed).append(s["name"])
 
         w = weights.get(s["name"], 1.0)
-        samples = 1 + sum(1 for _ in ())  # placeholder; sample count lives in DB
-        alpha = max(0.05, 0.30 / math.sqrt(1 + len(sig_rows)))
+        # α shrinks as a signal accumulates a track record, so each new outcome
+        # moves a well-evidenced weight less than a brand-new one's.
+        n_prior = samples.get(s["name"], 0)
+        alpha = max(0.05, 0.30 / math.sqrt(1 + n_prior))
         outcome_score = 1.25 if correct else 0.75
         w_new = min(max(w * (1 - alpha) + alpha * w * outcome_score, 0.25), 2.0)
         db.update_signal_weight(s["name"], round(w_new, 4), correct)
@@ -99,8 +102,17 @@ def generate_weekly_report(week_ending: dt.date, spy_week_return: Optional[float
     ranked = sorted(by_strategy.items(), key=lambda kv: kv[1]["pnl"], reverse=True)
 
     curve = db.equity_curve()
-    week_curve = [c["equity"] for c in curve if c["ts"][:10] >= start]
-    daily_rets = [(b - a) / a for a, b in zip(week_curve, week_curve[1:]) if a > 0]
+    week_rows = [c for c in curve if c["ts"][:10] >= start]
+    week_curve = [c["equity"] for c in week_rows]
+    # Equity is snapshotted every ~5-min scan, so consecutive points are NOT daily
+    # returns. Collapse to one (last) snapshot per calendar day before computing
+    # returns, so the √252 annualization in _sharpe is actually annualizing daily
+    # data rather than overstating Sharpe by ~√78.
+    by_day: dict = {}
+    for c in week_rows:
+        by_day[c["ts"][:10]] = c["equity"]   # later snapshot wins (dict insertion order)
+    daily_closes = [by_day[d] for d in sorted(by_day)]
+    daily_rets = [(b - a) / a for a, b in zip(daily_closes, daily_closes[1:]) if a > 0]
 
     weights = db.get_signal_weights()
     over = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)[:5]
@@ -116,7 +128,7 @@ def generate_weekly_report(week_ending: dt.date, spy_week_return: Optional[float
         "gross_loss": round(gross_loss, 2),
         "net_pnl": round(net, 2),
         "sharpe": _sharpe(daily_rets),
-        "max_drawdown": _max_drawdown(week_curve) if week_curve else None,
+        "max_drawdown": _max_drawdown(daily_closes) if daily_closes else None,
         "best_strategy": ({"name": ranked[0][0], **ranked[0][1]} if ranked else None),
         "worst_strategy": ({"name": ranked[-1][0], **ranked[-1][1],
                             "root_cause": _root_cause(ranked[-1][0])} if ranked else None),
