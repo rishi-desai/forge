@@ -3,11 +3,18 @@
 import { MOCK } from "./mock";
 
 const BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const TOKEN = import.meta.env.VITE_API_TOKEN || "";
 export const state = { demo: false };
+
+// Authorization header sent on every request when VITE_API_TOKEN is configured
+// (matches the backend's optional bearer gate; harmless when unset).
+const authHeaders = (extra = {}) =>
+  TOKEN ? { Authorization: `Bearer ${TOKEN}`, ...extra } : { ...extra };
 
 async function get(path, mockKey) {
   try {
-    const r = await fetch(`${BASE}${path}`, { signal: AbortSignal.timeout(3500) });
+    const r = await fetch(`${BASE}${path}`, {
+      headers: authHeaders(), signal: AbortSignal.timeout(10000) });
     if (!r.ok) throw new Error(r.status);
     state.demo = false;
     return await r.json();
@@ -29,7 +36,7 @@ export const api = {
   saveSettings: async (body) => {
     try {
       const r = await fetch(`${BASE}/api/settings`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
+        method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(body),
       });
       return await r.json();
@@ -38,7 +45,7 @@ export const api = {
   resolveOverride: async (id, approve) => {
     try {
       const r = await fetch(`${BASE}/api/overrides/${id}/${approve ? "approve" : "skip"}`,
-        { method: "POST" });
+        { method: "POST", headers: authHeaders() });
       return await r.json();
     } catch { return { ok: false, demo: true }; }
   },
@@ -49,7 +56,9 @@ export function subscribe(onEvent) {
   let ws, alive = true;
   const connect = () => {
     try {
-      ws = new WebSocket(BASE.replace(/^http/, "ws") + "/ws");
+      const wsUrl = BASE.replace(/^http/, "ws") + "/ws"
+        + (TOKEN ? `?token=${encodeURIComponent(TOKEN)}` : "");
+      ws = new WebSocket(wsUrl);
       ws.onmessage = (e) => { try { onEvent(JSON.parse(e.data)); } catch {} };
       ws.onclose = () => { if (alive) setTimeout(connect, 5000); };
     } catch { if (alive) setTimeout(connect, 5000); }
